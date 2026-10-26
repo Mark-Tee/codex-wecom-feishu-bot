@@ -57,7 +57,7 @@ async function main() {
     url: WS_URL,
     botId: config.botId,
     secret: config.secret,
-    log: (...parts) => process.stderr.write(`${parts.join(" ")}\n`),
+    log: () => {},
     onAuthenticated: resolveAuthenticated,
   });
 
