@@ -30,7 +30,7 @@ test("热点命令抽取话题且帮助说明显式启用限制", () => {
 test("Token 用量按高峰价格累计并持久化", () => {
   const dir = makeTempDir();
   try {
-    const fixedNow = new Date("2026-10-26T10:30:00+08:00");
+    const fixedNow = new Date(2026, 9, 26, 10, 30, 0);
     const tracker = createUsageTracker({
       dataRoot: dir,
       nowProvider: () => fixedNow,
