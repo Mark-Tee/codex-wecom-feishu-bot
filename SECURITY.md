@@ -11,6 +11,11 @@
 The repository ignores `config.json`, `worker/config.json`, `worker/duty-config.json`,
 `.env`, runtime state, logs, and downloaded media.
 
+Browser failure screenshots are written under the ignored
+`data/feishu-browser-diagnostics` directory. Review and delete them locally
+according to the deployment's data-retention policy; never attach them to a
+public issue.
+
 ## Trust Boundary
 
 This bot runs Codex and browser automation on the host machine. Only pair WeCom

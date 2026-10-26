@@ -10,6 +10,11 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
 const http = require("http");
+const { createAnswerCache } = require("./lib/answer-cache.cjs");
+const { createHelpRouter } = require("./lib/help-router.cjs");
+const { createHotTopics, HOT_HELP_FEATURE, HOT_HELP_LINE, isHotCommand } = require("./lib/hot-topics.cjs");
+const { createUsageTracker } = require("./lib/usage-tracker.cjs");
+const { WeComLongConnection } = require("./lib/wecom-long-connection.cjs");
 const WSImpl = (() => {
   try {
     return require("ws");
@@ -103,6 +108,18 @@ function loadConfig() {
       dutyAgent.scriptPath || path.join("worker", "src", "scripts", "handle-wecom-message.mjs"),
     ),
     timeoutMs: Number(dutyAgent.timeoutMs || 180000),
+  };
+  const hotTopics = cfg.features && cfg.features.hotTopics
+    ? cfg.features.hotTopics
+    : {};
+  cfg.features = {
+    ...(cfg.features && typeof cfg.features === "object" ? cfg.features : {}),
+    hotTopics: {
+      enabled: Boolean(hotTopics.enabled),
+      crawlerDir: hotTopics.crawlerDir
+        ? path.resolve(ROOT, hotTopics.crawlerDir)
+        : path.join(DATA_ROOT, "integrations", "MediaCrawler"),
+    },
   };
   return cfg;
 }
@@ -213,9 +230,6 @@ const DEV_INSTRUCTIONS = [
   "普通问答最多执行 5 条命令就必须给出结论；值班草稿任务只执行读取源表、校验配置、生成 JSON、检查结果所需的命令，不做重复读取。回答控制在 15 行以内。",
 ].join(" ");
 
-const seen = new Set();
-const ackWaiters = new Map();
-
 function loadState() {
   try {
     return JSON.parse(fs.readFileSync(STATE_PATH, "utf8"));
@@ -233,49 +247,65 @@ function saveState(state) {
 }
 
 const state = loadState();
-
-let ws = null;
-let authed = false;
-let heartbeatTimer = null;
-let reconnectAttempt = 0;
-let authFailures = 0;
-let manualStop = false;
 const STARTED_AT = Date.now();
 let currentChild = null;
 let currentTaskStart = 0;
 let jobRunning = false;
 const taskQueue = [];
+let hotTopics = null;
 
 function frameId(frame) {
   return frame && frame.headers && frame.headers.req_id ? frame.headers.req_id : "";
 }
 
-function waitAck(rid, timeoutMs = Number(cfg.ackTimeoutMs || 15000)) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      ackWaiters.delete(rid);
-      reject(new Error(`ack timeout: ${rid}`));
-    }, timeoutMs);
-    ackWaiters.set(rid, (frame) => {
-      clearTimeout(timer);
-      ackWaiters.delete(rid);
-      if (frame.errcode && frame.errcode !== 0) {
-        reject(new Error(`ack errcode ${frame.errcode}: ${frame.errmsg || ""}`));
-      } else {
-        resolve(frame);
-      }
-    });
-  });
+const connection = new WeComLongConnection({
+  WebSocketImpl: WSImpl,
+  url: WS_URL,
+  botId: cfg.botId,
+  secret: cfg.secret,
+  ackTimeoutMs: Number(cfg.ackTimeoutMs || 15000),
+  log,
+  parseFrame: safeParse,
+  onFrame: handleFrame,
+  onAuthenticated: () => {
+    if (!hotTopics) return;
+    setTimeout(
+      () => hotTopics.resumeHotJob().catch((error) => log("resume error", error.message)),
+      3000,
+    );
+  },
+});
+
+function send(cmd, body, rid) {
+  return connection.send(cmd, body, rid);
 }
 
-async function send(cmd, body, rid) {
-  if (!ws || ws.readyState !== 1) throw new Error("websocket not open");
-  const id = rid || reqId(cmd);
-  const frame = { cmd, headers: { req_id: id } };
-  if (body !== undefined) frame.body = body;
-  const wait = waitAck(id);
-  ws.send(JSON.stringify(frame));
-  return wait;
+const usageTracker = createUsageTracker({
+  dataRoot: DATA_ROOT,
+});
+
+function bjNow() {
+  return usageTracker.now();
+}
+
+function dayKey(date) {
+  return usageTracker.dayKey(date);
+}
+
+function recordUsage(usage) {
+  usageTracker.record(usage);
+}
+
+function formatUsage(key) {
+  return usageTracker.format(key);
+}
+
+function usageEntry(key) {
+  return usageTracker.get(key);
+}
+
+function markUsageSent(key) {
+  usageTracker.markSent(key);
 }
 
 async function replyStream(sourceFrame, streamId, content, finish) {
@@ -352,78 +382,6 @@ function truncate(text, bytes = MAX_REPLY_BYTES) {
   return buf.subarray(0, bytes).toString("utf8") + "\n\n…（内容过长，已截断）";
 }
 
-const USAGE_DIR = path.join(DATA_ROOT, "cache", "token-usage");
-const USAGE_FILE = path.join(USAGE_DIR, "daily.json");
-fs.mkdirSync(USAGE_DIR, { recursive: true });
-const PRICING = {
-  peak: { hit: 0.04, miss: 2.0, out: 8.0 },
-  off: { hit: 0.02, miss: 1.0, out: 4.0 },
-};
-let usageData = {};
-try {
-  usageData = JSON.parse(fs.readFileSync(USAGE_FILE, "utf8"));
-} catch {
-  usageData = {};
-}
-
-function bjNow() {
-  try {
-    return new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Shanghai" }));
-  } catch {
-    return new Date();
-  }
-}
-
-function dayKey(d) {
-  const p = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
-
-function isPeakTime(d) {
-  const day = d.getDay();
-  const minutes = d.getHours() * 60 + d.getMinutes();
-  const weekday = day >= 1 && day <= 5;
-  return weekday && ((minutes >= 540 && minutes < 720) || (minutes >= 840 && minutes < 1080));
-}
-
-function saveUsage() {
-  try { fs.writeFileSync(USAGE_FILE, JSON.stringify(usageData, null, 2), "utf8"); } catch {}
-}
-
-function recordUsage(usage) {
-  if (!usage) return;
-  const now = bjNow();
-  const key = dayKey(now);
-  const entry = usageData[key] || { calls: 0, input: 0, cached: 0, output: 0, cost: 0 };
-  const input = Number(usage.input_tokens || 0);
-  const hit = Math.min(Number(usage.cached_input_tokens || 0), input);
-  const miss = Math.max(0, input - hit);
-  const out = Number(usage.output_tokens || 0);
-  const rate = isPeakTime(now) ? PRICING.peak : PRICING.off;
-  const cost = (hit / 1e6) * rate.hit + (miss / 1e6) * rate.miss + (out / 1e6) * rate.out;
-  entry.calls += 1;
-  entry.input += miss;
-  entry.cached += hit;
-  entry.output += out;
-  entry.cost += cost;
-  usageData[key] = entry;
-  saveUsage();
-}
-
-function formatUsage(key) {
-  const e = usageData[key];
-  if (!e || !e.calls) return `今日（${key}）没有模型调用，未产生 token 消耗。`;
-  const n = (v) => Number(v || 0).toLocaleString("en-US");
-  return [
-    `Codex 用量（${key}）`,
-    `模型调用：${e.calls} 次`,
-    `输入：${n(e.input)}（缓存未命中）+ ${n(e.cached)}（缓存命中）`,
-    `输出：${n(e.output)}`,
-    `预估费用：¥${Number(e.cost).toFixed(4)}`,
-    "计价：DeepSeek Flash，高峰/空闲已分别计算",
-  ].join("\n");
-}
-
 async function maybeSendDailySummary() {
   const now = bjNow();
   const today = dayKey(now);
@@ -433,16 +391,17 @@ async function maybeSendDailySummary() {
   const minutes = now.getHours() * 60 + now.getMinutes();
   let target = "";
   if (minutes >= 23 * 60 + 55) target = today;
-  else if (usageData[yesterday] && usageData[yesterday].calls && usageData.lastSent !== yesterday) target = yesterday;
+  else if (usageEntry(yesterday)?.calls && usageEntry("lastSent") !== yesterday) {
+    target = yesterday;
+  }
   if (!target) return;
-  if (usageData.lastSent === target) return;
-  const entry = usageData[target];
+  if (usageEntry("lastSent") === target) return;
+  const entry = usageEntry(target);
   if (!entry || !entry.calls) return;
   const who = (Array.isArray(state.__operators) && state.__operators[0]) || "operator";
   try {
     await sendChatMessage(who, 1, formatUsage(target));
-    usageData.lastSent = target;
-    saveUsage();
+    markUsageSent(target);
     log("daily usage sent", target);
   } catch (e) {
     log("daily usage send failed", e.message);
@@ -1080,279 +1039,33 @@ async function handleDeleteRequest(frame, prompt, chatKey) {
   return true;
 }
 
-const CACHE_ROOT = path.join(DATA_ROOT, "cache");
-const ANSWER_DIR = path.join(CACHE_ROOT, "answers");
-const ANSWER_CACHE_FILE = path.join(ANSWER_DIR, "index.json");
-const IMAGE_TTL_MS = 7 * 24 * 3600 * 1000;
-const IMAGE_MAX_BYTES = 500 * 1024 * 1024;
-const QR_TTL_MS = 24 * 3600 * 1000;
-const ANSWER_TTL_MS = 7 * 24 * 3600 * 1000;
-const ANSWER_MAX_ENTRIES = 200;
-fs.mkdirSync(ANSWER_DIR, { recursive: true });
-
-let answerCache = {};
-try {
-  answerCache = JSON.parse(fs.readFileSync(ANSWER_CACHE_FILE, "utf8"));
-} catch {
-  answerCache = {};
-}
-
-function saveAnswerCache() {
-  try {
-    fs.writeFileSync(ANSWER_CACHE_FILE, JSON.stringify(answerCache, null, 2), "utf8");
-  } catch {}
-}
-
-function cacheKeyFor(prompt, images) {
-  try {
-    const h = crypto.createHash("sha256");
-    h.update(String(prompt || ""));
-    for (const p of images || []) {
-      try { h.update(fs.readFileSync(p)); } catch {}
-    }
-    return h.digest("hex");
-  } catch {
-    return "";
-  }
-}
-
-function dirFiles(dir) {
-  try {
-    return fs.readdirSync(dir).map((name) => {
-      const full = path.join(dir, name);
-      const st = fs.statSync(full);
-      return { name, full, mtimeMs: st.mtimeMs, size: st.size };
-    }).filter((f) => !f.name.endsWith(".json"));
-  } catch {
-    return [];
-  }
-}
-
-function walkFiles(dir) {
-  const out = [];
-  let entries = [];
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...walkFiles(full));
-    else {
-      try {
-        const st = fs.statSync(full);
-        out.push({ full, size: st.size, mtimeMs: st.mtimeMs });
-      } catch {}
-    }
-  }
-  return out;
-}
+const QR_DIR = path.join(DATA_ROOT, "cache", "qr");
+fs.mkdirSync(QR_DIR, { recursive: true });
+const answerCache = createAnswerCache({
+  dataRoot: DATA_ROOT,
+  imageDir: IMAGE_DIR,
+  qrDir: QR_DIR,
+  log,
+});
 
 function cleanupCaches() {
-  const now = Date.now();
-  let removed = 0;
-  let freed = 0;
-
-  const images = dirFiles(IMAGE_DIR).sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const f of images) {
-    if (now - f.mtimeMs > IMAGE_TTL_MS) {
-      try { fs.rmSync(f.full, { force: true }); removed += 1; freed += f.size; } catch {}
-    }
-  }
-  let live = dirFiles(IMAGE_DIR);
-  let total = live.reduce((s, f) => s + f.size, 0);
-  for (const f of live.sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-    if (total <= IMAGE_MAX_BYTES) break;
-    try { fs.rmSync(f.full, { force: true }); total -= f.size; removed += 1; freed += f.size; } catch {}
-  }
-
-  for (const f of dirFiles(QR_DIR)) {
-    if (now - f.mtimeMs > QR_TTL_MS) {
-      try { fs.rmSync(f.full, { force: true }); removed += 1; } catch {}
-    }
-  }
-
-  let changed = false;
-  for (const [key, entry] of Object.entries(answerCache)) {
-    if (!entry || !entry.at || now - entry.at > ANSWER_TTL_MS) {
-      delete answerCache[key];
-      changed = true;
-    }
-  }
-  const keys = Object.keys(answerCache);
-  if (keys.length > ANSWER_MAX_ENTRIES) {
-    keys.sort((a, b) => answerCache[a].at - answerCache[b].at);
-    for (const k of keys.slice(0, keys.length - ANSWER_MAX_ENTRIES)) {
-      delete answerCache[k];
-      changed = true;
-    }
-  }
-  if (changed) saveAnswerCache();
-
-  const crawlerData = path.join(CRAWLER_DIR, "data");
-  const dataFiles = walkFiles(crawlerData).sort((a, b) => a.mtimeMs - b.mtimeMs);
-  for (const f of dataFiles) {
-    if (now - f.mtimeMs > 7 * 24 * 3600 * 1000) {
-      try { fs.rmSync(f.full, { force: true }); removed += 1; freed += f.size; } catch {}
-    }
-  }
-  let dataTotal = walkFiles(crawlerData).reduce((s, f) => s + f.size, 0);
-  const DATA_MAX_BYTES = 500 * 1024 * 1024;
-  if (dataTotal > DATA_MAX_BYTES) {
-    for (const f of walkFiles(crawlerData).sort((a, b) => a.mtimeMs - b.mtimeMs)) {
-      if (dataTotal <= DATA_MAX_BYTES) break;
-      try { fs.rmSync(f.full, { force: true }); dataTotal -= f.size; removed += 1; freed += f.size; } catch {}
-    }
-  }
-
-  if (removed || freed || changed) {
-    log("cache cleanup", `removed=${removed}`, `freed=${Math.round(freed / 1024 / 1024)}MB`);
-  }
-}
-
-const QR_DIR = path.join(DATA_ROOT, "cache", "qr");
-const CRAWLER_DIR = path.join(DATA_ROOT, "integrations", "MediaCrawler");
-const CRAWLER_PY = path.join(CRAWLER_DIR, ".venv", "Scripts", "python.exe");
-fs.mkdirSync(QR_DIR, { recursive: true });
-
-async function uploadMediaFile(filePath) {
-  const buf = fs.readFileSync(filePath);
-  const md5 = crypto.createHash("md5").update(buf).digest("hex");
-  const chunkSize = 512 * 1024;
-  const totalChunks = Math.ceil(buf.length / chunkSize);
-  const init = await send("aibot_upload_media_init", {
-    type: "image",
-    filename: path.basename(filePath),
-    total_size: buf.length,
-    total_chunks: totalChunks,
-    md5,
-  });
-  const uploadId = init.body && init.body.upload_id;
-  if (!uploadId) throw new Error("upload init: no upload_id");
-  for (let i = 0; i < totalChunks; i++) {
-    const chunk = buf.subarray(i * chunkSize, (i + 1) * chunkSize);
-    await send("aibot_upload_media_chunk", {
-      upload_id: uploadId,
-      chunk_index: i,
-      base64_data: chunk.toString("base64"),
-    });
-  }
-  const fin = await send("aibot_upload_media_finish", { upload_id: uploadId });
-  const mediaId = fin.body && fin.body.media_id;
-  if (!mediaId) throw new Error("upload finish: no media_id");
-  return mediaId;
-}
-
-async function replyImage(frame, filePath) {
-  const mediaId = await uploadMediaFile(filePath);
-  return send("aibot_respond_msg", { msgtype: "image", image: { media_id: mediaId } }, frameId(frame));
-}
-
-function startQrWatcher(frame, sinceMs) {
-  const sent = new Set();
-  const timer = setInterval(async () => {
-    try {
-      const pending = path.join(QR_DIR, "pending.json");
-      if (!fs.existsSync(pending)) return;
-      const data = JSON.parse(fs.readFileSync(pending, "utf8"));
-      if (!data.at || data.at * 1000 < sinceMs - 3000) return;
-      if (!data.path || sent.has(data.path) || !fs.existsSync(data.path)) return;
-      sent.add(data.path);
-      await replyText(frame, `需要扫码登录【${data.platform}】。二维码在下面，扫完回复“扫好了”继续。`).catch(() => {});
-      await replyImage(frame, data.path).catch((e) => {
-        log("qr send failed", e.message);
-      });
-      log("qr forwarded", data.platform, data.path);
-    } catch (e) {
-      log("qr watcher error", e.message);
-    }
-  }, 2000);
-  return () => clearInterval(timer);
-}
-
-function runCrawler(platform, topic, timeoutMs = 15 * 60 * 1000) {
-  killOrphanBrowsers();
-  return new Promise((resolve) => {
-    const args = [
-      "main.py",
-      "--platform", platform,
-      "--type", "search",
-      "--keywords", topic,
-      "--lt", "cookie",
-      "--crawler_max_notes_count", "3",
-      "--get_comment", "yes",
-      "--max_comments_count_singlenotes", "5",
-    ];
-    const child = spawn(CRAWLER_PY, args, {
-      cwd: CRAWLER_DIR,
-      env: { ...process.env, CODEX_QR_PLATFORM: platform, CODEX_QR_DIR: QR_DIR },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    let out = "";
-    child.stdout.on("data", (d) => { out += d.toString("utf8"); if (out.length > 200000) out = out.slice(-200000); });
-    child.stderr.on("data", (d) => { out += d.toString("utf8"); if (out.length > 200000) out = out.slice(-200000); });
-    const timer = setTimeout(() => {
-      try { execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { timeout: 10000 }); } catch {}
-      resolve({ ok: false, output: out + "\n(timeout)" });
-    }, timeoutMs);
-    child.on("error", (e) => { clearTimeout(timer); resolve({ ok: false, output: e.message }); });
-    child.on("close", (code) => { clearTimeout(timer); resolve({ ok: code === 0, output: out }); });
-  });
-}
-
-function collectDigest(topic, sinceMs = 0, maxChars = 6000) {
-  const base = path.join(CRAWLER_DIR, "data");
-  let files = [];
-  try {
-    files = fs.readdirSync(base, { withFileTypes: true })
-      .filter((d) => d.isDirectory())
-      .flatMap((d) => {
-        const out = [];
-        const walk = (dir) => {
-          let entries = [];
-          try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-          for (const e of entries) {
-            const full = path.join(dir, e.name);
-            if (e.isDirectory()) walk(full);
-            else if (/search_(contents|comments).*\.(json|jsonl)$/i.test(e.name)) out.push(full);
-          }
-        };
-        walk(path.join(base, d.name));
-        return out;
-      })
-      .filter((p) => sinceMs <= 0 || fs.statSync(p).mtimeMs >= sinceMs)
-      .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-  } catch {}
-  const chunks = [];
-  let used = 0;
-  let items = 0;
-  for (const file of files.slice(0, 14)) {
-    let text = "";
-    try { text = fs.readFileSync(file, "utf8"); } catch { continue; }
-    const pieces = [];
-    for (const m of text.matchAll(/"(?:title|content|text|desc|comment_text)"\s*:\s*"([^"]{4,300})"/g)) {
-      pieces.push(m[1]);
-      items += 1;
-      if (pieces.join(" ").length > 600) break;
-    }
-    const block = `【${path.basename(file)}】\n${pieces.join("\n")}`;
-    if (used + block.length > maxChars) break;
-    chunks.push(block);
-    used += block.length;
-  }
-  return { text: chunks.join("\n\n"), files: files.length, items };
+  answerCache.cleanup();
+  if (hotTopics) hotTopics.cleanup();
 }
 
 // 全局约定：新增任何功能/命令，必须同时更新 HELP_ENTRIES 与 FULL_HELP（触发词、参数、示例、限制）。
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
-  {
-    id: "hot",
-    aliases: ["热点", "舆情", "热搜", "热榜", "抓取", "爬取", "爬虫", "mediacrawler", "热点抓取"],
-    usage: "【热点抓取】\n触发：热点 <话题>\n示例：热点 五险一金\n说明：稳定优先，串行抓取 B站/微博/贴吧，每平台 3 帖 × 5 评论、6 秒间隔，约 5-8 分钟。\n稳定优先：串行、6 秒间隔，预计 5-8 分钟；中断会记住进度并自动续跑。",
-  },
+  ...(cfg.features.hotTopics.enabled ? [HOT_HELP_FEATURE] : []),
   {
     id: "image",
     aliases: ["图片", "图像", "看图", "识图", "截图", "ocr", "文字识别", "照片"],
     usage: "【图片识别】\n触发：直接发图片（私聊），或群里发图文混排\n说明：文字类问题走本地 OCR（约 2 秒），其他交给视觉模型。",
+  },
+  {
+    id: "duty",
+    aliases: ["工单", "draft", "done", "fill", "pending", "cancel", "待办", "飞书填写"],
+    usage: "【值班工单与飞书】\n工单图片或 /draft：解析、核对并创建飞书任务\n/fill <短号>：重新填写飞书\n/pending：查看本会话未完成短号\n/cancel <短号>：取消尚未完成的本地工单\n/done <短号>：确认飞书已提交后更新腾讯文档草稿\n示例：/fill 12、/done 12\n限制：短号取飞书任务列表号后三位；已提交的短号不会重复提交。",
   },
   {
     id: "delete",
@@ -1388,7 +1101,12 @@ const FEATURES = [
 
 const FULL_HELP = [
   "可用指令与触发词：",
-  "热点 <话题>   —— 稳定优先抓取并汇总（5-8 分钟，中断可续跑）",
+  ...(cfg.features.hotTopics.enabled ? [HOT_HELP_LINE] : []),
+  "工单图片 / /draft —— 解析、核对并创建飞书任务",
+  "/fill <短号>  —— 重新填写飞书",
+  "/pending      —— 查看未完成工单",
+  "/cancel <短号>—— 取消本地待办",
+  "/done <短号>  —— 更新腾讯文档草稿",
   "图片          —— 私聊发图，文字类走 OCR",
   "删除 <路径>   —— 安全删除（文档类先确认）",
   "/status       —— 连接、队列、当前任务",
@@ -1402,78 +1120,11 @@ const FULL_HELP = [
   "/help         —— 显示这份列表",
 ].join("\n");
 
-function normalizeHelpText(value) {
-  return String(value || "")
-    .toLowerCase()
-    .replace(/[\uFF01-\uFF5E]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/[^\p{L}\p{N}]/gu, "");
-}
-
-const HELP_HINTS = ["怎么", "如何", "怎样", "用法", "使用", "触发", "关键词", "指令", "命令", "帮助", "说明", "介绍", "help", "usage", "howto", "command", "keyword"];
-const LIST_HINTS = ["有哪些", "列表", "全部", "所有", "能做什么", "功能列表", "所有指令", "全部命令"];
-
-async function handleHelpQuery(frame, prompt) {
-  const raw = String(prompt || "").trim();
-  if (!raw) return false;
-  const norm = normalizeHelpText(raw);
-  if (!norm) return false;
-
-  if (/^\/help\b/i.test(raw)) {
-    const rest = norm.replace(/^\/?help/, "");
-    const target = FEATURES.find((f) => f.aliases.some((a) => rest.includes(normalizeHelpText(a))));
-    await replyText(frame, target ? target.usage : FULL_HELP).catch(() => {});
-    return true;
-  }
-
-  const isHelp = HELP_HINTS.some((h) => norm.includes(normalizeHelpText(h)));
-  const isList = LIST_HINTS.some((h) => norm.includes(normalizeHelpText(h)));
-  const exactFeature = FEATURES.find((f) => f.aliases.some((a) => norm === normalizeHelpText(a)));
-  const matched = FEATURES.find((f) => f.aliases.some((a) => norm.includes(normalizeHelpText(a))));
-
-  if (isList || (!matched && isHelp)) {
-    await replyText(frame, FULL_HELP).catch(() => {});
-    return true;
-  }
-  if (exactFeature) {
-    await replyText(frame, exactFeature.usage).catch(() => {});
-    return true;
-  }
-  if (isHelp && matched) {
-    await replyText(frame, matched.usage).catch(() => {});
-    return true;
-  }
-  return false;
-}
-const HOT_JOB_DIR = path.join(DATA_ROOT, "cache", "hot-jobs");
-const HOT_JOB_FILE = path.join(HOT_JOB_DIR, "current.json");
-fs.mkdirSync(HOT_JOB_DIR, { recursive: true });
-function killOrphanBrowsers() {
-  try {
-    const script = "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('chrome.exe','msedge.exe') -and $_.CommandLine -match 'remote-debugging-port=9222|ms-playwright|playwright|--headless' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }";
-    execFileSync("powershell", ["-NoProfile", "-Command", script], { timeout: 20000, windowsHide: true });
-  } catch (e) {
-    log("kill orphan browsers failed", e.message);
-  }
-}
-
-const PLATFORM_NAMES = { bili: "B站", wb: "微博", tieba: "贴吧", xhs: "小红书", dy: "抖音", ks: "快手", zhihu: "知乎" };
-
-function platformNames(list) {
-  return (list || []).map((p) => PLATFORM_NAMES[p] || p).join("、");
-}
-
-function saveHotJob(job) {
-  try { fs.writeFileSync(HOT_JOB_FILE, JSON.stringify(job, null, 2), "utf8"); } catch {}
-}
-
-function loadHotJob() {
-  try { return JSON.parse(fs.readFileSync(HOT_JOB_FILE, "utf8")); } catch { return null; }
-}
-
-function clearHotJob() {
-  try { fs.rmSync(HOT_JOB_FILE, { force: true }); } catch {}
-}
-
+const handleHelpQuery = createHelpRouter({
+  features: FEATURES,
+  fullHelp: FULL_HELP,
+  replyText,
+});
 async function sendChatMessage(chatid, chatType, text) {
   if (!chatid) return;
   await send("aibot_send_msg", {
@@ -1484,96 +1135,17 @@ async function sendChatMessage(chatid, chatType, text) {
   });
 }
 
-async function runHotTopicWork(job, notify) {
-  const remaining = job.platforms.filter((x) => !job.done.includes(x));
-  for (const p of remaining) {
-    const name = PLATFORM_NAMES[p] || p;
-    await notify(`开始抓取【${name}】。已完成：${platformNames(job.done) || "无"}。`).catch(() => {});
-    const r = await runCrawler(p, job.topic, 240000);
-    if (r.ok) {
-      job.done.push(p);
-      saveHotJob(job);
-      await notify(`【${name}】完成。当前已完成：${platformNames(job.done)}`).catch(() => {});
-    } else {
-      log("crawl failed", p, String(r.output || "").slice(-300).replace(/\s+/g, " "));
-      await notify(`【${name}】没有跑完，稍后继续。已完成：${platformNames(job.done) || "无"}`).catch(() => {});
-    }
-  }
+hotTopics = createHotTopics({
+  dataRoot: DATA_ROOT,
+  enabled: cfg.features.hotTopics.enabled,
+  crawlerDir: cfg.features.hotTopics.crawlerDir,
+  log,
+  replyText,
+  send,
+  truncate,
+  runCodex,
+});
 
-  const partialList = [];
-  for (const p of job.platforms) {
-    if (job.done.includes(p)) continue;
-    const dir = path.join(CRAWLER_DIR, "data", p);
-    const fresh = walkFiles(dir).filter((f) => f.mtimeMs >= job.createdAt - 2000);
-    if (fresh.length) {
-      job.done.push(p);
-      partialList.push(PLATFORM_NAMES[p] || p);
-      saveHotJob(job);
-    }
-  }
-  if (partialList.length) {
-    await notify(`部分完成：${partialList.join("、")}（数据可能不完整，已纳入汇总）。`).catch(() => {});
-  }
-
-  const digest = collectDigest(job.topic, job.createdAt);
-  if (!digest.text) {
-    await notify("抓取结束，但没有读到有效内容。可能是登录失效或平台限制。").catch(() => {});
-    clearHotJob();
-    return;
-  }
-  await notify("抓取完成，正在汇总观点…").catch(() => {});
-  const summaryPrompt = [
-    `下面是从 ${platformNames(job.done)} 抓取到的关于「${job.topic}」的标题与评论片段。`,
-    "请用中文总结当下人们的看法，按支持/反对/中立/主要关切分类，",
-    "每类给出观点概述和 1-2 条代表性原话（注明来源文件名），最后给出样本量说明。",
-    `样本：${digest.files} 个数据文件，约 ${digest.items} 条标题/评论。未完成平台已注明。`,
-    "请控制在 600 字以内，先给结论再给依据。",
-    "不要编造未出现的内容；结论仅代表此样本范围。",
-    digest.text,
-  ].join("\n\n");
-  const result = await runCodex(summaryPrompt, undefined, []);
-  await notify(result.text || "(汇总失败)").catch(() => {});
-  clearHotJob();
-  killOrphanBrowsers();
-  log("hot done", job.topic, platformNames(job.done));
-}
-async function handleHot(frame, prompt, userId) {
-  const topic = prompt.replace(/^\/?hot\s*/i, "").replace(/^热点\s*/, "").trim();
-  if (!topic) {
-    await replyText(frame, "用法：热点 <话题>").catch(() => {});
-    return;
-  }
-  const platforms = ["bili", "wb", "tieba"];
-  const body = frame.body || {};
-  const job = {
-    topic,
-    platforms,
-    done: [],
-    chatid: body.chatid || userId,
-    chatType: body.chattype === "group" ? 2 : 1,
-    createdAt: Date.now(),
-  };
-  saveHotJob(job);
-  await replyText(frame, `开始抓取「${topic}」\n稳定优先：串行抓取 ${platformNames(platforms)}，每平台 3 帖 × 5 评论，请求间隔约 6 秒，预计 5-8 分钟。\n如果中途断开，我会记住进度，恢复后接着跑。`).catch(() => {});
-  const notify = (text) => replyText(frame, text);
-  await runHotTopicWork(job, notify);
-}
-
-async function resumeHotJob() {
-  const job = loadHotJob();
-  if (!job) return;
-  const remaining = (job.platforms || []).filter((p) => !(job.done || []).includes(p));
-  if (!remaining.length) { clearHotJob(); return; }
-  log("resume hot job", job.topic, remaining.join(","));
-  try {
-    await sendChatMessage(
-      job.chatid,
-      job.chatType,
-      `上次「${job.topic}」已完成：${platformNames(job.done) || "无"}；还剩：${platformNames(remaining)}。我接着跑，不用你重新发。`,
-    );
-  } catch (e) { log("resume notify failed", e.message); }
-  await runHotTopicWork(job, (text) => sendChatMessage(job.chatid, job.chatType, text));
-}
 async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const body = frame.body || {};
   if (!body.msgid) return;
@@ -1650,7 +1222,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
       : "空闲";
     await replyText(
       frame,
-      [`连接：${authed ? "已认证" : "未认证"}`, `运行：${up} 秒`, `队列：${taskQueue.length} 个`, `当前：${taskDesc}`, `操作者：${userId}`].join("\n"),
+      [`连接：${connection.authenticated ? "已认证" : "未认证"}`, `运行：${up} 秒`, `队列：${taskQueue.length} 个`, `当前：${taskDesc}`, `操作者：${userId}`].join("\n"),
     ).catch(() => {});
     return;
   }
@@ -1662,7 +1234,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
 
   if (/^(\/stop|停止|取消|终止|中断)/i.test(prompt)) {
     const had = Boolean(currentChild);
-    clearHotJob();
+    hotTopics.clearJob();
     taskQueue.length = 0;
     if (currentChild) {
       try { currentChild.kill(); } catch {}
@@ -1674,8 +1246,8 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
 
   if (await handleHelpQuery(frame, prompt)) return;
 
-  if (/^(\/hot\b|热点)/.test(prompt)) {
-    await handleHot(frame, prompt, userId);
+  if (cfg.features.hotTopics.enabled && isHotCommand(prompt)) {
+    await hotTopics.handleHot(frame, prompt, userId);
     return;
   }
 
@@ -1723,14 +1295,6 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     return;
   }
   if (await handleDeleteRequest(frame, prompt, chatKey)) return;
-  if (prompt === "/help" || prompt === "帮助") {
-    await replyText(
-      frame,
-      "@我 + 任务：在本机执行并回帖\n工单图片或 /draft：自动解析、核对并提交飞书单\n/done <短号>：更新腾讯文档草稿\n/fill <短号>：重新填写飞书\n/pending：查看未完成工单\n/cancel <短号>：取消本地待办\n/new：清空会话\n/stop：停止当前任务\n/status：查看运行状态\n/invite：生成邀请码\n/operators：查看操作者\n/revoke <id>：移除操作者\n/pair <码>：绑定操作者\n/help：显示这条",
-    ).catch((e) => log("reply fail", e.message));
-    return;
-  }
-
   const dutyAgentCommand = /^\/(done|fill|pending|cancel)(?:\s|$)/i.test(prompt);
   const useDutyAgent = cfg.dutyAgent.enabled && (dutyIntent || dutyAgentCommand);
   if (useDutyAgent) {
@@ -1822,17 +1386,16 @@ async function processTask(task) {
     ).catch((e) =>
       log("stream start fail", e.message),
     );
-    const cacheKey = images.length ? cacheKeyFor(prompt, images) : "";
-    const cached = cacheKey ? answerCache[cacheKey] : null;
-    if (cached && Date.now() - cached.at < ANSWER_TTL_MS && !/(重新|再分析|最新)/.test(prompt)) {
+    const cacheKey = images.length ? answerCache.key(prompt, images) : "";
+    const cached = cacheKey ? answerCache.get(cacheKey) : null;
+    if (cached && answerCache.isFresh(cached) && !/(重新|再分析|最新)/.test(prompt)) {
       await replyStream(frame, streamId, truncate(`（缓存命中）\n\n${cached.text || ""}`), true).catch(() => {});
       log("answer cache hit", cacheKey.slice(0, 12));
       return;
     }
     const result = await runCodex(prompt, known, images);
     if (result.ok && cacheKey) {
-      answerCache[cacheKey] = { at: Date.now(), text: result.text || "" };
-      saveAnswerCache();
+      answerCache.set(cacheKey, result.text || "");
     }
     if (result.threadId && state[chatKey] !== result.threadId) {
       state[chatKey] = result.threadId;
@@ -1965,14 +1528,8 @@ function mixedText(body) {
   return "";
 }
 
-function onFrame(raw) {
-  const frame = safeParse(raw);
+function handleFrame(frame) {
   if (!frame) return;
-  const id = frameId(frame);
-  if (id && ackWaiters.has(id)) {
-    ackWaiters.get(id)(frame);
-    return;
-  }
   if (frame.cmd) log("frame", frame.cmd);
   switch (frame.cmd) {
     case "aibot_msg_callback": {
@@ -2005,82 +1562,6 @@ function onFrame(raw) {
   }
 }
 
-function startHeartbeat() {
-  clearInterval(heartbeatTimer);
-  heartbeatTimer = setInterval(() => {
-    if (!ws || ws.readyState !== 1) return;
-    const id = reqId("ping");
-    try {
-      ws.send(JSON.stringify({ cmd: "ping", headers: { req_id: id } }));
-    } catch (e) {
-      log("ping fail", e.message);
-    }
-  }, 30000);
-}
-
-function connect() {
-  if (manualStop) return;
-  log("connecting", WS_URL, `attempt=${reconnectAttempt}`);
-  ws = new WSImpl(WS_URL);
-
-  if (typeof ws.on === "function") {
-    ws.on("unexpected-response", (req, res) => {
-      log("handshake rejected", res.statusCode, JSON.stringify(res.headers).slice(0, 400));
-    });
-  }
-
-  ws.addEventListener("open", () => {
-    authed = false;
-    log("ws open, subscribing");
-    ws.send(
-      JSON.stringify({
-        cmd: "aibot_subscribe",
-        headers: { req_id: reqId("subscribe") },
-        body: { bot_id: cfg.botId, secret: cfg.secret },
-      }),
-    );
-    startHeartbeat();
-  });
-
-  ws.addEventListener("message", (event) => {
-    const raw = typeof event.data === "string" ? event.data : String(event.data);
-    if (!authed) {
-      try {
-        const frame = JSON.parse(raw);
-        if (frame.errcode === 0) {
-          authed = true;
-          reconnectAttempt = 0;
-          authFailures = 0;
-          log("authenticated as", cfg.botId);
-          setTimeout(() => resumeHotJob().catch((e) => log("resume error", e.message)), 3000);
-        } else if (frame.errcode !== undefined) {
-          authFailures += 1;
-          log("auth failed", frame.errcode, frame.errmsg || "", `consecutive=${authFailures}`);
-          try { ws.close(); } catch {}
-        }
-      } catch {}
-    }
-    onFrame(raw);
-  });
-
-  ws.addEventListener("error", (e) => {
-    log("ws error", (e && e.message) || "unknown");
-  });
-
-  ws.addEventListener("close", (e) => {
-    authed = false;
-    clearInterval(heartbeatTimer);
-    log("ws closed", e.code, e.reason || "");
-    if (manualStop) return;
-    reconnectAttempt += 1;
-    // 凭证错误时别高频重试，避免触发订阅频率保护。
-    const delay = authFailures > 0
-      ? Math.min(300000, 10000 * 2 ** Math.min(authFailures - 1, 5))
-      : Math.min(30000, 1000 * 2 ** Math.min(reconnectAttempt, 5));
-    setTimeout(connect, delay);
-  });
-}
-
 function startNotifyServer() {
   const server = http.createServer((req, res) => {
     if (req.method !== "POST" || req.url !== "/notify") {
@@ -2097,7 +1578,7 @@ function startNotifyServer() {
         const payload = JSON.parse(raw || "{}");
         const text = String(payload.text || "Codex 任务结束").trim();
         const last = state.__lastChat__;
-        if (!authed) throw new Error("bridge 还没连上企业微信");
+        if (!connection.authenticated) throw new Error("bridge 还没连上企业微信");
         if (!last || !last.chatid) throw new Error("还没有会话，先在群里 @ 机器人说一句话");
         await send("aibot_send_msg", {
           chatid: last.chatid,
@@ -2225,11 +1706,7 @@ if (!cfg.botId || !cfg.secret) {
 }
 
 process.on("SIGINT", () => {
-  manualStop = true;
-  clearInterval(heartbeatTimer);
-  try {
-    ws && ws.close();
-  } catch {}
+  connection.stop();
   log("stopped");
   process.exit(0);
 });
@@ -2263,6 +1740,6 @@ if (!process.argv.includes("--ask") && !dutyDryRunMode) {
   refreshSystemInfo();
   setInterval(refreshSystemInfo, 30000);
   startNotifyServer();
-  connect();
+  connection.start();
   log("bridge started, workdir =", cfg.workdir, "| codex =", CODEX_EXE);
 }

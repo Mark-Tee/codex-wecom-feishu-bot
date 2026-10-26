@@ -50,13 +50,8 @@ $operator = Read-Required "Your name shown in Feishu"
 $workdir = Read-Host "Codex working directory (default: $PSScriptRoot)"
 if (-not $workdir) { $workdir = $PSScriptRoot }
 $formUrl = Read-Required "Feishu Base record view URL"
-$taskListViewId = Read-Required "Feishu 'all tasks' view ID (vew...)"
-
-Write-Host ""
-Write-Host "Paste the JSON printed by:" -ForegroundColor Cyan
-Write-Host "  node worker/src/scripts/discover-feishu-fields.mjs --config worker/config.json" -ForegroundColor Cyan
-Write-Host "Leave blank to keep browser filling disabled for now."
-$fieldMapRaw = Read-Host "Feishu field map JSON"
+$locationHint = "Comma-separated Feishu task location options"
+$locationsRaw = Read-Host $locationHint
 
 $bridge = Get-Content -LiteralPath $bridgeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $bridge.botId = $botId
@@ -66,32 +61,21 @@ $bridge.dutyAgent.enabled = $true
 $bridge.dutyReport.enabled = $false
 
 $worker = Get-Content -LiteralPath $workerConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
-$browserWasEnabled = [bool]$worker.feishuBrowser.enabled
 $worker.runtime.workdir = $workdir
 $worker.duty.defaultOperator = $operator
 $worker.duty.pinyinHints = @{}
 $worker.feishuBrowser.formUrl = $formUrl
-$worker.feishuBrowser.taskListViewId = $taskListViewId
-$worker.feishuBrowser.enabled = $browserWasEnabled
+$worker.feishuBrowser | Add-Member -NotePropertyName autoDiscoverFields -NotePropertyValue $true -Force
+$worker.feishuBrowser.enabled = $true
 $worker.feishuBrowser.autoSubmit = $true
-
-if ($fieldMapRaw.Trim()) {
-    try {
-        $fieldMap = $fieldMapRaw | ConvertFrom-Json
-    } catch {
-        throw "Feishu field map is not valid JSON."
-    }
-    foreach ($key in @("taskList", "source", "location", "transactionNo", "roomTicketNo", "workContent", "specificWork", "expectedEnterAt", "assignees", "companions")) {
-        if (-not $fieldMap.$key) { throw "Feishu field map is missing: $key" }
-        $worker.feishuBrowser.fieldIds.$key = [string]$fieldMap.$key
-    }
-    $worker.feishuBrowser.enabled = $true
-} else {
-    if ($browserWasEnabled) {
-        Write-Host "Keeping the existing Feishu field map." -ForegroundColor Green
-    } else {
-        Write-Host "Browser filling remains disabled until field IDs are configured." -ForegroundColor Yellow
-    }
+if ($locationsRaw.Trim()) {
+    $worker.feishuBrowser.options.location = @(
+        $locationsRaw.Split(",") |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ }
+    )
+} elseif (-not $worker.feishuBrowser.options.location) {
+    throw "At least one Feishu task location option is required."
 }
 
 $duty = Get-Content -LiteralPath $dutyConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -108,6 +92,20 @@ Write-Json $bridgeConfigPath $bridge
 Write-Json $workerConfigPath $worker
 Write-Json $dutyConfigPath $duty
 
-Write-Host "Configuration written." -ForegroundColor Green
-Write-Host "Next: edit worker/duty-config.json with your sheet and draft IDs, then run doctor.cmd." -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Opening the dedicated Feishu browser profile." -ForegroundColor Cyan
+Write-Host "If Feishu asks you to sign in, complete login within 2 minutes." -ForegroundColor Yellow
+$previousDiscoveryTimeout = $env:FEISHU_DISCOVERY_TIMEOUT_MS
+$env:FEISHU_DISCOVERY_TIMEOUT_MS = "120000"
+try {
+    & $node.Source .\worker\src\scripts\discover-feishu-fields.mjs --config $workerConfigPath --write --check
+    if ($LASTEXITCODE -ne 0) {
+        throw "Feishu field discovery failed. See the message above, then rerun setup."
+    }
+} finally {
+    $env:FEISHU_DISCOVERY_TIMEOUT_MS = $previousDiscoveryTimeout
+}
+
+Write-Host "Configuration written and Feishu fields discovered." -ForegroundColor Green
+Write-Host "Next: run doctor.cmd. Tencent Docs can be enabled later if you use /done." -ForegroundColor Cyan
 & $node.Source .\bridge.cjs --self-test

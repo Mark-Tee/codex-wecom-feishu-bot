@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FeishuTaskCreationService } from "../src/providers/feishu-base/task-service.mjs";
+import { FeishuTaskCreationService } from "../src/legacy/feishu-base/task-service.mjs";
 
 function field(name, type) {
   return { field_name: name, type };

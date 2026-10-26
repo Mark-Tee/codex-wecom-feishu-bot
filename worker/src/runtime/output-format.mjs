@@ -63,6 +63,7 @@ export function formatBrowserFillSummary(result, { autoSubmit = false } = {}) {
   return [
     filled ? "**飞书浏览器已部分填写**" : "**飞书浏览器未完成填写**",
     result.taskNumber ? `任务列表：${result.taskNumber}` : "",
+    result.diagnostics?.code ? `失败阶段：${result.diagnostics.code}` : "",
     filled ? `已填：${filled}` : "",
     skipped ? `未填：${skipped}` : result.message || "",
     "请核对后补填并手工提交，也可修正后发送 /fill 重试。",

@@ -138,6 +138,15 @@ export class EdgeFormSession {
     return this.connection.pressEscape();
   }
 
+  async captureScreenshot() {
+    const result = await this.connection.send("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    });
+    return Buffer.from(result.data || "", "base64");
+  }
+
   close() {
     this.connection.close();
   }

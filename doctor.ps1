@@ -57,10 +57,19 @@ if ($cfg -and $cfg.dutyAgent -and $cfg.dutyAgent.enabled) {
         try {
             $workerCfg = Get-Content -LiteralPath $agentConfig -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($workerCfg.feishuBrowser.enabled) {
-                $fieldPlaceholders = $workerCfg.feishuBrowser.fieldIds.PSObject.Properties |
-                    Where-Object { $_.Value -match 'Placeholder|YOUR_' }
-                if ($workerCfg.feishuBrowser.formUrl -match 'YOUR_' -or $workerCfg.feishuBrowser.taskListViewId -match 'YOUR_' -or $fieldPlaceholders) {
-                    Report "fail" "飞书浏览器配置" "仍有占位符"
+                $requiredFieldIds = @("taskList", "source", "location", "transactionNo", "roomTicketNo", "workContent", "specificWork", "expectedEnterAt", "assignees", "companions")
+                $missingFieldIds = @($requiredFieldIds | Where-Object {
+                    -not $workerCfg.feishuBrowser.fieldIds.$_ -or
+                    $workerCfg.feishuBrowser.fieldIds.$_ -notmatch '^fld[A-Za-z0-9]+$'
+                })
+                if (-not $workerCfg.feishuBrowser.formUrl -or $workerCfg.feishuBrowser.formUrl -match 'YOUR_') {
+                    Report "fail" "飞书浏览器配置" "formUrl 为空或仍有占位符"
+                } elseif ($missingFieldIds.Count -and $workerCfg.feishuBrowser.autoDiscoverFields -eq $true) {
+                    Report "warn" "飞书字段自动发现" ("缺少 " + ($missingFieldIds -join ", ") + "，首次填表会尝试发现")
+                } elseif ($missingFieldIds.Count) {
+                    Report "fail" "飞书字段映射" ("缺少 " + ($missingFieldIds -join ", "))
+                } elseif ($workerCfg.feishuBrowser.entryMode -eq "record" -and -not $workerCfg.feishuBrowser.taskListViewId) {
+                    Report "warn" "飞书全部任务视图" "未配置，首次填表会尝试自动发现"
                 } else {
                     Report "ok" "飞书浏览器配置" "已启用"
                 }

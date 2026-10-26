@@ -34,6 +34,8 @@
 - 校验事务单号和机房单号格式
 - 按当天白班 `WD`、夜班 `WN` 自动生成飞书任务列表号
 - 使用本地浏览器自动填写、核对并提交飞书记录
+- 首次配置自动发现飞书字段和“全部任务列表”视图
+- 建单失败按浏览器、字段、任务号、核对、提交分阶段诊断
 - 本地短号取任务列表号后三位，例如 `WN20261026006 -> 6`
 - 飞书提交后发送 `/done <短号>` 更新腾讯文档草稿
 - 重复命令、重复飞书记录和旧日期短号都有防重逻辑
@@ -45,7 +47,7 @@
 1. Node.js 22+
 2. 已安装并登录的 Codex CLI
 3. 企业微信智能机器人的 `BotID` 和长连接 `Secret`
-4. 飞书多维表格记录页 URL、全部任务视图 ID 和字段 ID
+4. 飞书多维表格记录页 URL 和任务地点选项
 5. 腾讯文档访问 Token，以及排班/周报/交接班/草稿文件 ID（只使用腾讯文档功能时需要）
 
 Token、Secret、Cookie 和真实业务数据都不进入 Git。
@@ -65,7 +67,7 @@ cd codex-wecom-feishu-bot
 .\setup.cmd
 ```
 
-向导会创建：
+向导会创建以下文件，并自动打开机器人专用 Edge：
 
 ```text
 config.json
@@ -75,36 +77,10 @@ worker/duty-config.json
 
 这三个文件已被 `.gitignore` 忽略。
 
-### 3. 登录飞书专用 Edge
+如果 Feishu 要求登录，请在两分钟内完成。向导会打开一个空白“添加记录”表单，
+自动发现字段 ID 和任务列表视图 ID，然后关闭调试连接，不会提交测试记录。
 
-第一次启用浏览器填写时，机器人会打开独立 Edge 配置。请只在这个配置中登录飞书，不要使用日常浏览器配置。
-
-打开任意一条主任务记录卡后运行：
-
-```powershell
-node worker/src/scripts/discover-feishu-fields.mjs --config worker/config.json
-```
-
-脚本会输出类似：
-
-```json
-{
-  "taskList": "fldXXXX",
-  "source": "fldXXXX",
-  "location": "fldXXXX",
-  "transactionNo": "fldXXXX",
-  "roomTicketNo": "fldXXXX",
-  "workContent": "fldXXXX",
-  "specificWork": "fldXXXX",
-  "expectedEnterAt": "fldXXXX",
-  "assignees": "fldXXXX",
-  "companions": "fldXXXX"
-}
-```
-
-重新运行 `setup.cmd` 并粘贴这段 JSON，或在 `worker/config.json` 中手工填写。
-
-### 4. 检查配置
+### 3. 检查配置
 
 ```powershell
 .\doctor.cmd
@@ -112,7 +88,7 @@ node worker/src/scripts/discover-feishu-fields.mjs --config worker/config.json
 
 所有 `[fail]` 项必须处理。`[warn]` 项按实际部署情况处理。
 
-### 5. 启动
+### 4. 启动
 
 前台启动，方便查看日志：
 
@@ -128,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
 
 看到 `authenticated as <BotID>` 表示企业微信长连接成功。
 
-### 6. 配对用户
+### 5. 配对用户
 
 首次启动会在本机生成 `pairing-code.txt`。在企业微信里发送：
 
@@ -186,6 +162,34 @@ powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
 - 任一关键字段不一致时停止提交。
 - 不读取或保存飞书 Cookie。
 - 自动提交必须同时显式开启 `feishuBrowser.enabled` 和 `feishuBrowser.autoSubmit`。
+- 失败截图只写入本机忽略目录 `data/feishu-browser-diagnostics`，不会进入 Git。
+
+## 真实表 E2E
+
+先只生成目标表指纹，不创建记录：
+
+```powershell
+node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json --runs=10
+```
+
+确认目标是专用测试表后，再显式执行 10 次：
+
+```powershell
+node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json --runs=10 `
+  --execute --confirm-table=<上一步的 targetFingerprint> `
+  --record D:\Codex\records\feishu-e2e.json
+```
+
+报告包含成功率、P50、P95、最大耗时和失败阶段。默认验收门槛为成功率不低于
+90%，P95 不超过 60 秒。脚本不会自动删除测试记录。
+
+维护人员也可以一次性将验收摘要私发给指定企业微信用户。单聊使用用户 ID，
+消息文件不得包含凭证或真实业务数据：
+
+```powershell
+node scripts/send-wecom-private.cjs --config config.json `
+  --user <企业微信用户ID> --message-file <本地消息文件>
+```
 
 ## 腾讯文档
 
@@ -246,9 +250,12 @@ OCR 文字只作为辅助，不替代原始工单图片。
 ```powershell
 npm run check
 npm test
+npm run scan:secrets
 ```
 
 测试覆盖工单解析、单号校验、WD/WN 任务号、短号迁移、飞书字段、腾讯文档合并和安全校验。
+`bridge.cjs` 的长连接、用量统计、回答缓存、帮助路由和热点抓取已拆到 `lib/`；
+热点抓取默认关闭，旧飞书 Open API 隔离在 `worker/src/legacy/`，核心建单链路不依赖它。
 
 ## 已知限制
 

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { EdgeFormSession, sleep } from "./edge-session.mjs";
 import { validateDutyIdentifiers } from "../../core/duty-identifiers.mjs";
 import {
@@ -7,7 +9,6 @@ import {
   resolvePersonFields,
 } from "./field-options.mjs";
 import {
-  clickVisibleTextScript,
   datePickerVisibleScript,
   dateTimeInputValuesScript,
   dropdownRectScript,
@@ -26,6 +27,14 @@ import {
 import {
   readTaskNumbers,
 } from "./task-list-reader.mjs";
+import {
+  BROWSER_FIELD_LABELS,
+  discoverFieldIds,
+  discoverTaskListViewId,
+  hasOpenRecordForm,
+  missingRequiredFieldIds,
+  openRecordFormForDiscovery,
+} from "./field-discovery.mjs";
 import {
   nextTaskNumber,
   parseExpectedEnterAt,
@@ -48,6 +57,19 @@ export function assertNoOpenRecordForm(alreadyOpen) {
   }
 }
 
+export function diagnosticCodeForStage(stage) {
+  const value = String(stage || "");
+  if (value === "open-browser") return "browser_open";
+  if (value === "open-record") return "record_open";
+  if (value === "wait-form") return "form_load";
+  if (value === "discover-fields") return "field_discovery";
+  if (value === "read-task-numbers" || value === "refresh-task-number") return "task_number";
+  if (value.startsWith("fill:")) return "field_fill";
+  if (value === "verify-fields") return "field_verification";
+  if (value === "submit") return "submit";
+  return "unknown";
+}
+
 export class FeishuBrowserFormFiller {
   constructor({ config = {}, logger } = {}) {
     this.config = config;
@@ -55,25 +77,71 @@ export class FeishuBrowserFormFiller {
   }
 
   get enabled() {
-    return Boolean(this.config.enabled && this.config.formUrl && this.config.fieldIds);
+    return Boolean(
+      this.config.enabled
+      && this.config.formUrl
+      && (this.config.autoDiscoverFields || Object.keys(this.config.fieldIds || {}).length),
+    );
   }
 
   #selector(fieldId) {
     return fieldSelector(fieldId, this.config.entryMode || "form");
   }
 
+  async #discoverFields(session) {
+    try {
+      if (!this.config.autoDiscoverFields) {
+        const missing = missingRequiredFieldIds(this.config.fieldIds);
+        if (missing.length) {
+          throw new Error(`字段映射缺少：${missing.join(", ")}`);
+        }
+        return { missing: [], discoveredKeys: [] };
+      }
+      const discovery = await discoverFieldIds(session, {
+        fieldIds: this.config.fieldIds,
+        mode: this.config.entryMode || "record",
+      });
+      this.config.fieldIds = discovery.fieldIds;
+      if (!this.config.taskListViewId && (this.config.entryMode || "record") === "record") {
+        this.config.taskListViewId = await discoverTaskListViewId(session);
+      }
+      const missing = missingRequiredFieldIds(this.config.fieldIds);
+      if (missing.length) {
+        const labels = missing.map((key) => BROWSER_FIELD_LABELS[key] || key);
+        throw new Error(`自动字段发现缺少：${labels.join("、")}`);
+      }
+      if ((this.config.entryMode || "record") === "record" && !this.config.taskListViewId) {
+        throw new Error("无法自动发现“全部任务列表”视图 ID");
+      }
+      return {
+        missing: [],
+        discoveredKeys: Object.keys(this.config.fieldIds),
+      };
+    } catch (error) {
+      error.browserStage = "discover-fields";
+      throw error;
+    }
+  }
+
   async #waitForForm(session) {
-    const selectors = Object.values(this.config.fieldIds).map((fieldId) => this.#selector(fieldId));
+    const selectors = Object.values(this.config.fieldIds || {}).map((fieldId) => this.#selector(fieldId));
     const deadline = Date.now() + Number(this.config.formTimeoutMs || 20_000);
     while (Date.now() < deadline) {
       const state = await session.evaluate(`(() => ({
         url: location.href,
         ready: document.readyState,
-        form: ${JSON.stringify(selectors)}.every((selector) => document.querySelector(selector)),
+        form: ${
+          selectors.length
+            ? `${JSON.stringify(selectors)}.every((selector) => document.querySelector(selector)) || `
+            : ""
+        }Boolean(document.querySelector(
+          '.base_record_card_field_editor_wrapper > label[data-field-id], [id^="field-item-"][data-field-id]'
+        )),
         login: /(扫码登录|登录飞书|请登录)/.test(document.body?.innerText || "")
       }))()`);
       if (state?.form) {
         await sleep(1000);
+        await this.#discoverFields(session);
         return;
       }
       if (state?.login) {
@@ -94,32 +162,14 @@ export class FeishuBrowserFormFiller {
   }
 
   async #openRecordModal(session) {
-    const clickVisibleText = (text) => session.evaluate(clickVisibleTextScript(text));
-
-    const selectors = Object.values(this.config.fieldIds).map((fieldId) => this.#selector(fieldId));
-    const alreadyOpen = await session.evaluate(
-      `${JSON.stringify(selectors)}.some((selector) => document.querySelector(selector))`,
-    );
+    const alreadyOpen = await hasOpenRecordForm(session);
     assertNoOpenRecordForm(alreadyOpen);
-
-    const deadline = Date.now() + Number(this.config.formTimeoutMs || 20_000);
-    let viewClicked = false;
-    while (Date.now() < deadline && !viewClicked) {
-      viewClicked = await clickVisibleText("待办任务列表");
-      if (!viewClicked) await sleep(300);
-    }
-    if (!viewClicked) throw new Error("找不到“待办任务列表”视图");
-    await sleep(400);
-    const modalOpen = await session.evaluate(
-      `${JSON.stringify(selectors)}.some((selector) => document.querySelector(selector))`,
-    );
-    let addClicked = modalOpen;
-    while (Date.now() < deadline && !addClicked) {
-      addClicked = await clickVisibleText("添加记录");
-      if (!addClicked) await sleep(300);
-    }
-    if (!addClicked) throw new Error("找不到“添加记录”按钮");
-    await this.#waitForForm(session);
+    const discovery = await openRecordFormForDiscovery(session, {
+      timeoutMs: Number(this.config.formTimeoutMs || 20_000),
+      existingFieldIds: this.config.fieldIds,
+    });
+    this.config.fieldIds = discovery.fieldIds;
+    await this.#discoverFields(session);
   }
 
   async #clickField(session, fieldId) {
@@ -380,6 +430,36 @@ export class FeishuBrowserFormFiller {
     throw new Error("已点击提交，但未检测到飞书提交成功确认");
   }
 
+  async #captureFailureDiagnostics(session, stage, error, startedAt) {
+    const diagnostics = {
+      stage,
+      code: diagnosticCodeForStage(stage),
+      errorName: error?.name || "Error",
+      errorMessage: String(error?.message || error),
+      elapsedMs: Date.now() - startedAt,
+    };
+    if (
+      !session
+      || this.config.diagnostics?.enabled === false
+      || !this.config.diagnostics?.screenshotDir
+    ) {
+      return diagnostics;
+    }
+    try {
+      fs.mkdirSync(this.config.diagnostics.screenshotDir, { recursive: true });
+      const screenshot = await session.captureScreenshot();
+      const file = path.join(
+        this.config.diagnostics.screenshotDir,
+        `${new Date().toISOString().replace(/[:.]/g, "-")}-${process.pid}.png`,
+      );
+      fs.writeFileSync(file, screenshot);
+      diagnostics.screenshotPath = file;
+    } catch (captureError) {
+      diagnostics.screenshotError = captureError.message;
+    }
+    return diagnostics;
+  }
+
   async fill(task) {
     if (!this.enabled) {
       return { ok: false, configured: false, message: "浏览器自动填表未启用" };
@@ -390,6 +470,7 @@ export class FeishuBrowserFormFiller {
     const failed = [];
     const timings = {};
     const startedAt = Date.now();
+    let stage = "validate";
     const identifierErrors = validateDutyIdentifiers(task.fillCard || {});
     if (identifierErrors.length) {
       return {
@@ -421,7 +502,18 @@ export class FeishuBrowserFormFiller {
       };
     }
     try {
+      stage = "open-browser";
       session = await EdgeFormSession.open(this.config);
+      stage = (this.config.entryMode || "record") === "record"
+        ? "open-record"
+        : "wait-form";
+      if (this.config.entryMode === "record") {
+        await this.#openRecordModal(session);
+      } else {
+        await this.#waitForForm(session);
+      }
+      stage = "discover-fields";
+      const discovery = await this.#discoverFields(session);
       const ids = this.config.fieldIds;
       const options = this.config.options || {};
       const card = task.fillCard || {};
@@ -429,12 +521,11 @@ export class FeishuBrowserFormFiller {
         expectedEnterAt: card.expectedEnterAt,
         receivedAt: task.receivedAt,
       });
+      stage = "read-task-numbers";
       let taskNumber = nextTaskNumber(
         await this.#readTaskNumbers(session, shift.prefix),
         shift.prefix,
       );
-      if (this.config.entryMode === "record") await this.#openRecordModal(session);
-      else await this.#waitForForm(session);
 
       const workContent = chooseWorkContent(card, options.workContent || []);
       const source = matchOption(
@@ -476,6 +567,7 @@ export class FeishuBrowserFormFiller {
         )],
       ];
       for (const [label, action] of actions) {
+        stage = `fill:${label}`;
         const actionStartedAt = Date.now();
         try {
           if (await action()) filled.push(label);
@@ -488,6 +580,7 @@ export class FeishuBrowserFormFiller {
         }
       }
 
+      stage = "refresh-task-number";
       const refreshedTaskNumber = nextTaskNumber(
         await this.#readTaskNumbers(session, shift.prefix),
         shift.prefix,
@@ -503,6 +596,7 @@ export class FeishuBrowserFormFiller {
       const expectedEnterAt = parseExpectedEnterAt(card.expectedEnterAt);
       const expectedDate = expectedEnterAt?.date || "";
       const expectedTime = expectedEnterAt?.time || "";
+      stage = "verify-fields";
       const verification = await this.#verifyFields(session, ids, {
         taskList: taskNumber,
         source,
@@ -518,6 +612,12 @@ export class FeishuBrowserFormFiller {
       });
       if (!verification.ok) {
         failed.push("字段核对");
+        const diagnostics = await this.#captureFailureDiagnostics(
+          session,
+          stage,
+          new Error(`字段核对不一致：${verification.mismatches.join("、")}`),
+          startedAt,
+        );
         return {
           ok: false,
           configured: true,
@@ -528,6 +628,10 @@ export class FeishuBrowserFormFiller {
           skipped,
           failed,
           verification,
+          diagnostics: {
+            ...diagnostics,
+            mismatches: verification.mismatches,
+          },
           submitted: false,
           timings: { ...timings, total: Date.now() - startedAt },
           message: `字段核对不一致：${verification.mismatches.join("、")}`,
@@ -537,6 +641,7 @@ export class FeishuBrowserFormFiller {
 
       let submitted = false;
       if (this.config.autoSubmit) {
+        stage = "submit";
         const submitStartedAt = Date.now();
         try {
           submitted = await this.#submit(session);
@@ -545,6 +650,7 @@ export class FeishuBrowserFormFiller {
         }
       }
 
+      stage = "complete";
       return {
         ok: failed.length === 0,
         configured: true,
@@ -555,20 +661,38 @@ export class FeishuBrowserFormFiller {
         skipped,
         failed,
         verification,
+        autoDiscoveredFields: discovery.discoveredKeys,
+        diagnostics: {
+          stage,
+          elapsedMs: Date.now() - startedAt,
+        },
         submitted,
         submittedAt: submitted ? new Date().toISOString() : "",
         timings: { ...timings, total: Date.now() - startedAt },
         pageUrl: this.config.formUrl,
       };
     } catch (error) {
-      this.logger?.warn("飞书浏览器自动填表失败", error.message);
+      const failureStage = error.browserStage || stage;
+      const diagnostics = await this.#captureFailureDiagnostics(
+        session,
+        failureStage,
+        error,
+        startedAt,
+      );
+      this.logger?.warn(
+        "飞书浏览器自动填表失败",
+        `${diagnostics.code}/${failureStage}: ${error.message}`,
+      );
       return {
         ok: false,
         configured: true,
         filled,
         skipped,
         failed,
+        verification: { ok: false, mismatches: [] },
+        submitted: false,
         timings: { ...timings, total: Date.now() - startedAt },
+        diagnostics,
         message: error.message,
         pageUrl: this.config.formUrl,
       };

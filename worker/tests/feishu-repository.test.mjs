@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FeishuTaskRepository, matchTaskRecords } from "../src/providers/feishu-base/repository.mjs";
+import { FeishuTaskRepository, matchTaskRecords } from "../src/legacy/feishu-base/repository.mjs";
 
 const task = {
   recordId: "task-1",

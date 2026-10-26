@@ -37,5 +37,18 @@ WN20261026012 -> 12
 ## Failure handling
 
 - Configuration and field validation failures stop before browser submission.
-- Browser failures return the partial state and keep the local task for retry.
+- Browser failures return the partial state, stage code, elapsed time, and an
+  ignored local screenshot path, and keep the local task for retry.
 - Tencent Docs writes are backed up locally before replacement.
+
+## Module boundaries
+
+- `bridge.cjs` orchestrates WeCom messages, Codex jobs, and the local task queue.
+- `lib/wecom-long-connection.cjs` owns authentication, ACK routing, heartbeat,
+  and reconnect backoff.
+- `lib/usage-tracker.cjs`, `lib/answer-cache.cjs`, and `lib/help-router.cjs`
+  contain side-effect-focused helpers.
+- `lib/hot-topics.cjs` is optional and disabled unless explicitly configured.
+- `worker/src/platforms/feishu-browser` owns all browser automation.
+- `worker/src/legacy/feishu-base` is historical Open API code and is not imported
+  by the default runtime.

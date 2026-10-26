@@ -20,3 +20,5 @@ jobs:
         run: npm run check
       - name: Unit tests
         run: npm test
+      - name: Sensitive-information scan
+        run: npm run scan:secrets

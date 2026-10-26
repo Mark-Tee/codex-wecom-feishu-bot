@@ -11,8 +11,12 @@ src/scripts/handle-wecom-message.mjs
                             One-shot JSON stdin/stdout entry point
 src/platforms/feishu-browser
                             Edge/CDP browser automation
+src/scripts/benchmark-feishu-e2e.mjs
+                            Guarded real-table 10-run benchmark
 src/providers/tencent-docs
                             Tencent Docs draft provider
+src/legacy
+                            Opt-in historical Feishu Open API code
 ```
 
 ## Runtime Files
@@ -29,15 +33,16 @@ logs/
 
 ## Feishu Field Discovery
 
-Start the dedicated Edge profile, log in to Feishu, open any record card in the
-target task table, then run:
+The root setup wizard runs discovery automatically. For a manual read-only check:
 
 ```powershell
-node src/scripts/discover-feishu-fields.mjs --config config.json
+node src/scripts/discover-feishu-fields.mjs --config config.json --check
 ```
 
-The output is a JSON mapping accepted by `setup.ps1` or can be copied into
-`feishuBrowser.fieldIds`.
+The command may open a blank record form to inspect labels, but does not fill or
+submit it. Add `--write` to save discovered field and view IDs into the local
+config. Add `--no-open` when a record card is already open. The check output
+contains counts only, not table credentials or IDs.
 
 ## Worker Protocol
 

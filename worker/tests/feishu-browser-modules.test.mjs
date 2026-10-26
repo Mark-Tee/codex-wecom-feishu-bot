@@ -44,6 +44,10 @@ test("飞书 DOM 脚本可编译且字段选择器受控", () => {
     assert.doesNotThrow(() => new Function(script));
   }
   assert.match(clickVisibleTextScript("添加记录"), /aria-label/);
+  assert.ok(
+    clickVisibleTextScript("添加记录").indexOf("querySelectorAll('button')")
+      < clickVisibleTextScript("添加记录").indexOf("childElementCount === 0"),
+  );
   assert.equal(fieldSelector("fldExample", "record"), '.base_record_card_field_editor_wrapper:has(> label[data-field-id="fldExample"])');
   assert.equal(fieldSelector("fldExample", "form"), "#field-item-fldExample");
   assert.throws(() => fieldSelector("bad selector"), /无效的飞书字段 ID/);

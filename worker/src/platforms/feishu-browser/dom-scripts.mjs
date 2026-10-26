@@ -117,6 +117,13 @@ export function clickVisibleTextScript(text) {
       || element.textContent
       || ''
     ).trim();
+    const button = [...document.querySelectorAll('button')].find((element) => (
+      isVisibleElement(element) && labelOf(element) === wanted
+    ));
+    if (button) {
+      button.click();
+      return true;
+    }
     const leaf = [...document.querySelectorAll('*')].find((element) => (
       element.childElementCount === 0
       && isVisibleElement(element)
@@ -127,12 +134,7 @@ export function clickVisibleTextScript(text) {
       target.click();
       return true;
     }
-    const button = [...document.querySelectorAll('button')].find((element) => (
-      isVisibleElement(element) && labelOf(element) === wanted
-    ));
-    if (!button) return false;
-    button.click();
-    return true;
+    return false;
   })()`;
 }
 

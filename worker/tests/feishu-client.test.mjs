@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { FeishuApiError, FeishuBaseClient } from "../src/providers/feishu-base/client.mjs";
+import { FeishuApiError, FeishuBaseClient } from "../src/legacy/feishu-base/client.mjs";
 
 function response(payload, status = 200) {
   return {

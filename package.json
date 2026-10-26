@@ -9,8 +9,10 @@
   },
   "scripts": {
     "start": "node bridge.cjs",
-    "check": "node --check bridge.cjs && node --check worker/src/scripts/handle-wecom-message.mjs",
+    "check": "node --check bridge.cjs && node --check lib/answer-cache.cjs && node --check lib/help-router.cjs && node --check lib/hot-topics.cjs && node --check lib/usage-tracker.cjs && node --check lib/wecom-long-connection.cjs && node --check worker/src/platforms/feishu-browser/field-discovery.mjs && node --check worker/src/platforms/feishu-browser/e2e-benchmark.mjs && node --check worker/src/scripts/handle-wecom-message.mjs && node --check worker/src/scripts/discover-feishu-fields.mjs && node --check worker/src/scripts/benchmark-feishu-e2e.mjs",
     "test": "node scripts/run-tests.mjs",
+    "scan:secrets": "node scripts/scan-secrets.mjs",
+    "send:wecom-private": "node scripts/send-wecom-private.cjs",
     "doctor": "powershell -NoProfile -ExecutionPolicy Bypass -File ./doctor.ps1",
     "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./setup.ps1"
   },

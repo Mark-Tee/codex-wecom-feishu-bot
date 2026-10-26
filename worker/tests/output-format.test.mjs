@@ -48,5 +48,11 @@ test("浏览器结果摘要区分提交、待核验和失败", () => {
     ok: false,
     filled: ["任务列表"],
     skipped: ["陪同人（人员不存在）"],
+    diagnostics: { code: "field_fill" },
   }), /飞书浏览器已部分填写/);
+  assert.match(formatBrowserFillSummary({
+    configured: true,
+    ok: false,
+    diagnostics: { code: "submit" },
+  }), /失败阶段：submit/);
 });

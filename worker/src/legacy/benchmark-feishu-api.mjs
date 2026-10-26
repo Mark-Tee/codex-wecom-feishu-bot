@@ -1,4 +1,4 @@
-import { FeishuTaskCreationService } from "../providers/feishu-base/task-service.mjs";
+import { FeishuTaskCreationService } from "./feishu-base/task-service.mjs";
 
 const TOTAL = Number(process.argv.find((item) => item.startsWith("--total="))?.split("=")[1] || 100);
 const CONCURRENCY = Number(process.argv.find((item) => item.startsWith("--concurrency="))?.split("=")[1] || 20);

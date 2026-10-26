@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ITEM_REGISTRY } from "../src/core/item-registration.mjs";
-import { FeishuItemRepository } from "../src/providers/feishu-base/item-repository.mjs";
+import { FeishuItemRepository } from "../src/legacy/feishu-base/item-repository.mjs";
 
 test("并发读取两张物品表并只比较当前主任务", async () => {
   const records = {

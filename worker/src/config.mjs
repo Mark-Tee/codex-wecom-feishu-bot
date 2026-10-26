@@ -5,6 +5,12 @@ function required(value, label) {
   if (!value) throw new Error(`配置缺少必填项：${label}`);
 }
 
+function realFieldId(value) {
+  const normalized = String(value || "").trim();
+  return /^fld[A-Za-z0-9]+$/.test(normalized)
+    && !/Placeholder|YOUR_/i.test(normalized);
+}
+
 export function loadConfig(configPath = path.resolve("config.json")) {
   const absolutePath = path.resolve(configPath);
   const configRoot = path.dirname(absolutePath);
@@ -39,12 +45,27 @@ export function loadConfig(configPath = path.resolve("config.json")) {
       || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     profileDir: path.resolve(configRoot, browser.profileDir || path.join(config.dataDir, "feishu-browser-profile")),
     formUrl: String(browser.formUrl || "").trim(),
-    taskListViewId: String(browser.taskListViewId || "").trim(),
+    taskListViewId: /^vew[A-Za-z0-9]+$/.test(String(browser.taskListViewId || "").trim())
+      ? String(browser.taskListViewId).trim()
+      : "",
     taskListPageSize: Number(browser.taskListPageSize || 3000),
     debugPort: Number(browser.debugPort || 9223),
     launchTimeoutMs: Number(browser.launchTimeoutMs || 20_000),
     formTimeoutMs: Number(browser.formTimeoutMs || 20_000),
-    fieldIds: browser.fieldIds || {},
+    autoDiscoverFields: browser.autoDiscoverFields !== false,
+    fieldIds: Object.fromEntries(
+      Object.entries(browser.fieldIds || {})
+        .filter(([, value]) => realFieldId(value))
+        .map(([key, value]) => [key, String(value).trim()]),
+    ),
+    diagnostics: {
+      enabled: browser.diagnostics?.enabled !== false,
+      screenshotDir: path.resolve(
+        configRoot,
+        browser.diagnostics?.screenshotDir
+          || path.join(config.dataDir, "feishu-browser-diagnostics"),
+      ),
+    },
     options: {
       source: Array.isArray(browser.options?.source) ? browser.options.source : [],
       location: Array.isArray(browser.options?.location) ? browser.options.location : [],
@@ -56,21 +77,23 @@ export function loadConfig(configPath = path.resolve("config.json")) {
     if (!config.feishuBrowser.formUrl) {
       throw new Error("feishuBrowser.enabled 为 true 时必须配置 formUrl");
     }
-    for (const key of [
-      "source",
-      "location",
-      "transactionNo",
-      "roomTicketNo",
-      "workContent",
-      "expectedEnterAt",
-      "assignees",
-      "companions",
-      "taskList",
-    ]) {
-      required(config.feishuBrowser.fieldIds[key], `feishuBrowser.fieldIds.${key}`);
-    }
-    if (config.feishuBrowser.entryMode === "record") {
-      required(config.feishuBrowser.taskListViewId, "feishuBrowser.taskListViewId");
+    if (!config.feishuBrowser.autoDiscoverFields) {
+      for (const key of [
+        "source",
+        "location",
+        "transactionNo",
+        "roomTicketNo",
+        "workContent",
+        "expectedEnterAt",
+        "assignees",
+        "companions",
+        "taskList",
+      ]) {
+        required(config.feishuBrowser.fieldIds[key], `feishuBrowser.fieldIds.${key}`);
+      }
+      if (config.feishuBrowser.entryMode === "record") {
+        required(config.feishuBrowser.taskListViewId, "feishuBrowser.taskListViewId");
+      }
     }
   }
   config.notifications = config.notifications || {};

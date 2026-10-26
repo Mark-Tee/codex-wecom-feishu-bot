@@ -1,5 +1,7 @@
 config.json
+config.e2e.json
 worker/config.json
+worker/config.e2e.json
 worker/duty-config.json
 .env
 data/
@@ -13,6 +15,8 @@ pairing-code.txt
 disabled.flag
 logs/
 worker/logs/
+records/
+worker/records/
 node_modules/
 worker/node_modules/
 *.log

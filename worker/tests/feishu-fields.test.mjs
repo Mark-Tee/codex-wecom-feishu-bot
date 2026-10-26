@@ -9,7 +9,7 @@ import {
   toLogicalFaultyDisk,
   toLogicalScan,
   toLogicalTask,
-} from "../src/providers/feishu-base/fields.mjs";
+} from "../src/legacy/feishu-base/fields.mjs";
 
 test("飞书复杂字段值转换为统一文本和人员", () => {
   assert.equal(textValue([{ type: "text", text: "更换光模块" }]), "更换光模块");

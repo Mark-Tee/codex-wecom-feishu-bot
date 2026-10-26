@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "benchmark:feishu": "node src/scripts/benchmark-feishu-fastpath.mjs"
+    "benchmark:feishu:e2e": "node src/scripts/benchmark-feishu-e2e.mjs",
+    "benchmark:feishu:api": "node src/legacy/benchmark-feishu-api.mjs"
   }
 }
