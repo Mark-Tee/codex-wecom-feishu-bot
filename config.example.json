@@ -1,0 +1,29 @@
+{
+  "botId": "把智能机器人详情里的 BotID 填这里",
+  "secret": "把长连接专用 Secret 填这里",
+  "workdir": ".",
+  "maxSeconds": 300,
+  "allowUsers": [],
+  "dutyAgent": {
+    "enabled": true,
+    "repoPath": "worker",
+    "configPath": "worker/config.json",
+    "scriptPath": "worker/src/scripts/handle-wecom-message.mjs",
+    "timeoutMs": 180000
+  },
+  "dutyReport": {
+    "enabled": false,
+    "repoPath": "worker",
+    "configPath": "worker/duty-config.json",
+    "specRoot": "data/drafts",
+    "autoOnImageOnly": true,
+    "onlineWrite": true,
+    "keywords": [
+      "工单",
+      "周报",
+      "交接班",
+      "草稿",
+      "值班"
+    ]
+  }
+}

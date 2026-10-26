@@ -1,0 +1,28 @@
+{
+  "name": "codex-wecom-feishu-bot",
+  "version": "0.1.0",
+  "description": "Self-hosted Codex bot for WeCom, Feishu Base and Tencent Docs",
+  "type": "module",
+  "private": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node bridge.cjs",
+    "check": "node --check bridge.cjs && node --check worker/src/scripts/handle-wecom-message.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "doctor": "powershell -NoProfile -ExecutionPolicy Bypass -File ./doctor.ps1",
+    "setup": "powershell -NoProfile -ExecutionPolicy Bypass -File ./setup.ps1"
+  },
+  "keywords": [
+    "codex",
+    "wecom",
+    "wechat-work",
+    "feishu",
+    "lark",
+    "tencent-docs",
+    "automation",
+    "self-hosted"
+  ],
+  "license": "MIT"
+}

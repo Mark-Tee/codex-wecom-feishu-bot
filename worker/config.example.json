@@ -1,0 +1,112 @@
+{
+  "dataDir": "data",
+  "platform": {
+    "type": "wecom"
+  },
+  "runtime": {
+    "workdir": "YOUR_CODEX_WORKDIR",
+    "codexExe": "",
+    "maxSeconds": 300,
+    "specRoot": "data/drafts",
+    "allowUsers": []
+  },
+  "duty": {
+    "enabled": true,
+    "configPath": "duty-config.json",
+    "defaultOperator": "YOUR_NAME",
+    "workflowMode": "manual-feishu",
+    "reasoningEffort": "low",
+    "prewarm": true,
+    "onlineWrite": true,
+    "pinyinHints": {
+      "YOUR_NAME": ["your-pinyin", "initials"]
+    },
+    "holidayNotification": {
+      "workLocation": "DEFAULT_LOCATION",
+      "taskType": "其他临时工作",
+      "title": "网络通报",
+      "urgent": "否",
+      "duration": "2h",
+      "requester": "DEFAULT_REQUESTER",
+      "publisher": "DEFAULT_PUBLISHER",
+      "recurring": "否",
+      "overtime": "是",
+      "start": "09:00",
+      "end": "15:00",
+      "feedback": "已完成",
+      "actualDuration": "6时00分"
+    }
+  },
+  "feishuBrowser": {
+    "enabled": false,
+    "autoFill": true,
+    "autoSubmit": false,
+    "entryMode": "record",
+    "edgeExecutable": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+    "profileDir": "data/feishu-browser-profile",
+    "formUrl": "YOUR_FEISHU_FORM_VIEW_URL",
+    "taskListViewId": "YOUR_ALL_TASKS_VIEW_ID",
+    "taskListPageSize": 3000,
+    "debugPort": 9223,
+    "launchTimeoutMs": 20000,
+    "formTimeoutMs": 20000,
+    "fieldIds": {
+      "taskList": "fldTaskListPlaceholder",
+      "source": "fldSourcePlaceholder",
+      "location": "fldLocationPlaceholder",
+      "transactionNo": "fldTransactionPlaceholder",
+      "roomTicketNo": "fldRoomPlaceholder",
+      "workContent": "fldWorkContentPlaceholder",
+      "specificWork": "fldSpecificWorkPlaceholder",
+      "expectedEnterAt": "fldTimePlaceholder",
+      "assignees": "fldAssigneePlaceholder",
+      "companions": "fldCompanionPlaceholder"
+    },
+    "options": {
+      "source": ["事务工单", "上下架", "布线理线", "其他任务"],
+      "location": ["YOUR_LOCATION_A", "YOUR_LOCATION_B"],
+      "workContent": [
+        "故障维修、隐患整改",
+        "硬件带外不通，测试设备排查",
+        "无故障进入机房",
+        "宕机物理重启",
+        "网线光纤插拔",
+        "上下架相关事项"
+      ]
+    },
+    "defaults": {
+      "source": "事务工单"
+    }
+  },
+  "feishuBase": {
+    "enabled": false,
+    "appId": "YOUR_FEISHU_APP_ID",
+    "appSecret": "KEEP_ONLY_IN_LOCAL_CONFIG",
+    "appToken": "YOUR_BITABLE_APP_TOKEN",
+    "taskViewId": "",
+    "tables": {
+      "tasks": "YOUR_TASK_TABLE_ID",
+      "roomScans": "YOUR_ROOM_SCAN_TABLE_ID",
+      "nonRoomScans": "YOUR_NON_ROOM_SCAN_TABLE_ID",
+      "carryOutItems": "YOUR_CARRY_OUT_ITEM_TABLE_ID",
+      "faultyDisks": "YOUR_FAULTY_DISK_TABLE_ID"
+    },
+    "itemRegistration": {
+      "checkOnDone": true,
+      "requireConfirmation": true,
+      "maxPhotoSizeMb": 20
+    },
+    "allowMultipleAssignees": true,
+    "scanBufferMinutes": 25
+  },
+  "ocr": {
+    "enabled": true,
+    "executable": "data/tools/ocr/RapidOCR-json/RapidOCR-json.exe",
+    "timeoutMs": 20000
+  },
+  "notifications": {
+    "enabled": true,
+    "port": 8799,
+    "disabled": false
+  }
+}

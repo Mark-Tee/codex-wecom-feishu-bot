@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "operator_name": "YOUR_NAME",
+  "timezone": "Asia/Shanghai",
+  "line": {
+    "name": "OPS",
+    "team_members": [
+      "Alice",
+      "Bob"
+    ],
+    "aux_column_header": "OPS_AUX",
+    "ignored_lines": [
+      "SYSTEM"
+    ]
+  },
+  "paths": {
+    "schedule_workbook": "",
+    "weekly_workbook": "",
+    "handover_workbook": ""
+  },
+  "sources": {
+    "mode": "online",
+    "online": {
+      "schedule": {
+        "file_url": "YOUR_SCHEDULE_SHEET_URL",
+        "file_id": "YOUR_SCHEDULE_FILE_ID"
+      },
+      "weekly": {
+        "file_url": "YOUR_WEEKLY_SHEET_URL",
+        "file_id": "YOUR_WEEKLY_FILE_ID"
+      },
+      "handover": {
+        "file_url": "YOUR_HANDOVER_SHEET_URL",
+        "file_id": "YOUR_HANDOVER_FILE_ID"
+      }
+    }
+  },
+  "schedule": {
+    "sheet_format": "YYYYMM",
+    "date_value_format": "yyyymmdd",
+    "primary_white_value": "白班",
+    "primary_night_value": "夜班",
+    "primary_white_fill": "FFFF00",
+    "primary_night_fill": "B4C6E7",
+    "staff_name_row": 1,
+    "first_data_row": 2,
+    "shift_times": {
+      "white": {
+        "start": "08:30",
+        "end": "17:30"
+      },
+      "night": {
+        "start": "17:30",
+        "end": "08:30",
+        "ends_next_day": true
+      },
+      "auxiliary": {
+        "start": "09:00",
+        "end": "15:00"
+      }
+    }
+  },
+  "weekly": {
+    "sheet_format": "M月",
+    "header_rows": 2,
+    "first_data_row": 3,
+    "columns": {
+      "sequence": "序号",
+      "work_location": "工作地",
+      "task_type": "任务类型",
+      "task_title": "任务描述",
+      "urgent": "紧急",
+      "date": "日期",
+      "estimated_duration": "预计耗时",
+      "requester": "需求人",
+      "publisher": "发布人",
+      "owner": "责任人",
+      "recurring": "周期任务",
+      "overtime": "加班",
+      "start_time": "任务开始时间",
+      "end_time": "任务结束时间",
+      "feedback": "任务反馈",
+      "problem": "问题",
+      "actual_duration": "任务总耗时"
+    }
+  },
+  "handover": {
+    "sheet_format": "YYYYMM",
+    "header_rows": 1,
+    "first_data_row": 2,
+    "line_value": "OPS",
+    "columns": {
+      "date": "日期",
+      "line": "条线",
+      "shift": "班次",
+      "operator": "交班值班姓名",
+      "completed": "当班已完成工作",
+      "unfinished": "当班未完成工作",
+      "successor": "接班值班姓名",
+      "carryover_result": "遗留工作完成情况说明",
+      "closed": "是否闭环"
+    },
+    "completed_work_mode": "one_cell_multiline",
+    "inspection_text": "日常机房巡检"
+  },
+  "draft": {
+    "mode": "spreadsheet",
+    "template_path": "assets/draft-template.xlsx",
+    "update_strategy": "reuse_existing_online",
+    "online_file_url": "YOUR_DRAFT_SHEET_URL",
+    "online_file_id": "YOUR_DRAFT_FILE_ID",
+    "local_output_filename": "current-draft.xlsx",
+    "speed_target_seconds": 60,
+    "weekly_sheet_name": "周报草稿",
+    "handover_sheet_name": "交接班草稿",
+    "include_headers": true,
+    "one_record_per_row": true,
+    "completed_work_single_cell": true
+  },
+  "defaults": {
+    "work_location": "YOUR_LOCATION",
+    "task_type": "其他临时工作",
+    "requester": "OPS_TEAM",
+    "publisher": "OPS_TEAM",
+    "recurring": "否",
+    "overtime": "否",
+    "feedback": "已完成",
+    "problem": "无",
+    "estimated_duration_rounding": "ceil_hours",
+    "task_end_rule": "min_agent_received_time_and_work_order_end"
+  },
+  "title_rules": {
+    "prefer_short_title": true,
+    "include_cabinet_or_u_position": false,
+    "include_vendor_person_when_present": true,
+    "include_serial_numbers": false
+  },
+  "handover_rules": {
+    "white_primary_collect_all_team_titles": true,
+    "night_primary_collect_operator_titles_only": true,
+    "auxiliary_writes_handover": false,
+    "other_role_writes_handover": false,
+    "deduplicate_titles": false,
+    "exclude_shift_marker_titles": true,
+    "successor_from_schedule": true,
+    "modify_previous_handover_row": false
+  },
+  "safety": {
+    "write_mode": "copy",
+    "append_position": "next_fully_empty_row",
+    "allow_direct_shared_write": false,
+    "overwrite_existing_rows": false
+  }
+}

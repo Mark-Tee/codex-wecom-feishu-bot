@@ -1,0 +1,14 @@
+{
+  "name": "codex-wecom-feishu-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Feishu browser and Tencent Docs worker for the Codex WeCom bot",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "benchmark:feishu": "node src/scripts/benchmark-feishu-fastpath.mjs"
+  }
+}
