@@ -183,6 +183,20 @@ node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json
 报告包含成功率、P50、P95、最大耗时和失败阶段。默认验收门槛为成功率不低于
 90%，P95 不超过 60 秒。脚本不会自动删除测试记录。
 
+执行时必须指定 `--record`。每次开始和结束都会保存进度；报告已存在时拒绝覆盖。
+中断后用原参数加 `--resume`，只执行尚未开始的轮次。若中断发生在建单过程中，
+报告会保留 `inFlight` 和测试单号，拒绝自动重试，需先核对测试表中的实际结果。
+进程被强制终止时可能留下同名 `.lock` 文件，确认旧进程已退出后再清理，禁止并发执行同一报告。
+不要为绕过未知结果而直接删除报告或盲目重跑。
+
+```powershell
+node worker/src/scripts/benchmark-feishu-e2e.mjs --help
+# 目标、次数和验收门槛必须与原批次相同
+node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json --runs=10 `
+  --execute --confirm-table=<原计划指纹> --record ./data/records/feishu-e2e.json --resume
+```
+
+
 维护人员也可以一次性将验收摘要私发给指定企业微信用户。单聊使用用户 ID，
 消息文件不得包含凭证或真实业务数据：
 
