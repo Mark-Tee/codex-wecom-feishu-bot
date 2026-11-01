@@ -4,11 +4,6 @@ const path = require("node:path");
 const test = require("node:test");
 const { createAnswerCache } = require("../lib/answer-cache.cjs");
 const { createHelpRouter } = require("../lib/help-router.cjs");
-const {
-  extractHotTopic,
-  HOT_HELP_FEATURE,
-  isHotCommand,
-} = require("../lib/hot-topics.cjs");
 const { createUsageTracker } = require("../lib/usage-tracker.cjs");
 const { WeComLongConnection } = require("../lib/wecom-long-connection.cjs");
 
@@ -17,15 +12,6 @@ function makeTempDir() {
   fs.mkdirSync(root, { recursive: true });
   return fs.mkdtempSync(path.join(root, "test-bridge-"));
 }
-
-test("热点命令抽取话题且帮助说明显式启用限制", () => {
-  assert.equal(isHotCommand("热点 测试话题"), true);
-  assert.equal(isHotCommand("/hot 测试话题"), true);
-  assert.equal(isHotCommand("查看热点"), false);
-  assert.equal(extractHotTopic("热点 测试话题"), "测试话题");
-  assert.equal(extractHotTopic("/hot 测试话题"), "测试话题");
-  assert.match(HOT_HELP_FEATURE.usage, /features\.hotTopics\.enabled/);
-});
 
 test("Token 用量按高峰价格累计并持久化", () => {
   const dir = makeTempDir();

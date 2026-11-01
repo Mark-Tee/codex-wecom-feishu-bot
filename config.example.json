@@ -4,11 +4,6 @@
   "workdir": ".",
   "maxSeconds": 300,
   "allowUsers": [],
-  "features": {
-    "hotTopics": {
-      "enabled": false
-    }
-  },
   "dutyAgent": {
     "enabled": true,
     "repoPath": "worker",

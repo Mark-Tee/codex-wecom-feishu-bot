@@ -48,7 +48,6 @@ WN20261026012 -> 12
   and reconnect backoff.
 - `lib/usage-tracker.cjs`, `lib/answer-cache.cjs`, and `lib/help-router.cjs`
   contain side-effect-focused helpers.
-- `lib/hot-topics.cjs` is optional and disabled unless explicitly configured.
 - `worker/src/platforms/feishu-browser` owns all browser automation.
 - `worker/src/legacy/feishu-base` is historical Open API code and is not imported
   by the default runtime.

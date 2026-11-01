@@ -19,6 +19,11 @@ const files = testDirs.flatMap((testDir) => {
     .map((name) => path.join(testDir, name));
 });
 
+if (files.length === 0) {
+  process.stderr.write("No test files found; refusing to report success.\n");
+  process.exit(1);
+}
+
 const result = spawnSync(process.execPath, ["--test", ...files], {
   stdio: "inherit",
   windowsHide: true,

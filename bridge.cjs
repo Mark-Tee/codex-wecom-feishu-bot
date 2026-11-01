@@ -12,7 +12,6 @@ const { spawn, execFileSync } = require("child_process");
 const http = require("http");
 const { createAnswerCache } = require("./lib/answer-cache.cjs");
 const { createHelpRouter } = require("./lib/help-router.cjs");
-const { createHotTopics, HOT_HELP_FEATURE, HOT_HELP_LINE, isHotCommand } = require("./lib/hot-topics.cjs");
 const { createUsageTracker } = require("./lib/usage-tracker.cjs");
 const { WeComLongConnection } = require("./lib/wecom-long-connection.cjs");
 const WSImpl = (() => {
@@ -108,18 +107,6 @@ function loadConfig() {
       dutyAgent.scriptPath || path.join("worker", "src", "scripts", "handle-wecom-message.mjs"),
     ),
     timeoutMs: Number(dutyAgent.timeoutMs || 180000),
-  };
-  const hotTopics = cfg.features && cfg.features.hotTopics
-    ? cfg.features.hotTopics
-    : {};
-  cfg.features = {
-    ...(cfg.features && typeof cfg.features === "object" ? cfg.features : {}),
-    hotTopics: {
-      enabled: Boolean(hotTopics.enabled),
-      crawlerDir: hotTopics.crawlerDir
-        ? path.resolve(ROOT, hotTopics.crawlerDir)
-        : path.join(DATA_ROOT, "integrations", "MediaCrawler"),
-    },
   };
   return cfg;
 }
@@ -252,7 +239,6 @@ let currentChild = null;
 let currentTaskStart = 0;
 let jobRunning = false;
 const taskQueue = [];
-let hotTopics = null;
 
 function frameId(frame) {
   return frame && frame.headers && frame.headers.req_id ? frame.headers.req_id : "";
@@ -267,13 +253,6 @@ const connection = new WeComLongConnection({
   log,
   parseFrame: safeParse,
   onFrame: handleFrame,
-  onAuthenticated: () => {
-    if (!hotTopics) return;
-    setTimeout(
-      () => hotTopics.resumeHotJob().catch((error) => log("resume error", error.message)),
-      3000,
-    );
-  },
 });
 
 function send(cmd, body, rid) {
@@ -1039,24 +1018,19 @@ async function handleDeleteRequest(frame, prompt, chatKey) {
   return true;
 }
 
-const QR_DIR = path.join(DATA_ROOT, "cache", "qr");
-fs.mkdirSync(QR_DIR, { recursive: true });
 const answerCache = createAnswerCache({
   dataRoot: DATA_ROOT,
   imageDir: IMAGE_DIR,
-  qrDir: QR_DIR,
   log,
 });
 
 function cleanupCaches() {
   answerCache.cleanup();
-  if (hotTopics) hotTopics.cleanup();
 }
 
 // 全局约定：新增任何功能/命令，必须同时更新 HELP_ENTRIES 与 FULL_HELP（触发词、参数、示例、限制）。
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
-  ...(cfg.features.hotTopics.enabled ? [HOT_HELP_FEATURE] : []),
   {
     id: "image",
     aliases: ["图片", "图像", "看图", "识图", "截图", "ocr", "文字识别", "照片"],
@@ -1101,7 +1075,6 @@ const FEATURES = [
 
 const FULL_HELP = [
   "可用指令与触发词：",
-  ...(cfg.features.hotTopics.enabled ? [HOT_HELP_LINE] : []),
   "工单图片 / /draft —— 解析、核对并创建飞书任务",
   "/fill <短号>  —— 重新填写飞书",
   "/pending      —— 查看未完成工单",
@@ -1134,17 +1107,6 @@ async function sendChatMessage(chatid, chatType, text) {
     markdown: { content: truncate(text) },
   });
 }
-
-hotTopics = createHotTopics({
-  dataRoot: DATA_ROOT,
-  enabled: cfg.features.hotTopics.enabled,
-  crawlerDir: cfg.features.hotTopics.crawlerDir,
-  log,
-  replyText,
-  send,
-  truncate,
-  runCodex,
-});
 
 async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const body = frame.body || {};
@@ -1234,7 +1196,6 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
 
   if (/^(\/stop|停止|取消|终止|中断)/i.test(prompt)) {
     const had = Boolean(currentChild);
-    hotTopics.clearJob();
     taskQueue.length = 0;
     if (currentChild) {
       try { currentChild.kill(); } catch {}
@@ -1245,11 +1206,6 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
 
   if (await handleHelpQuery(frame, prompt)) return;
-
-  if (cfg.features.hotTopics.enabled && isHotCommand(prompt)) {
-    await hotTopics.handleHot(frame, prompt, userId);
-    return;
-  }
 
   if (prompt === "/invite" || prompt === "/paircode") {
     const code = String(Math.floor(100000 + Math.random() * 900000));

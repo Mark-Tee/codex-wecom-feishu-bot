@@ -177,7 +177,7 @@ node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json
 ```powershell
 node worker/src/scripts/benchmark-feishu-e2e.mjs --config worker/config.e2e.json --runs=10 `
   --execute --confirm-table=<上一步的 targetFingerprint> `
-  --record D:\Codex\records\feishu-e2e.json
+  --record ./data/records/feishu-e2e.json
 ```
 
 报告包含成功率、P50、P95、最大耗时和失败阶段。默认验收门槛为成功率不低于
@@ -254,8 +254,8 @@ npm run scan:secrets
 ```
 
 测试覆盖工单解析、单号校验、WD/WN 任务号、短号迁移、飞书字段、腾讯文档合并和安全校验。
-`bridge.cjs` 的长连接、用量统计、回答缓存、帮助路由和热点抓取已拆到 `lib/`；
-热点抓取默认关闭，旧飞书 Open API 隔离在 `worker/src/legacy/`，核心建单链路不依赖它。
+`bridge.cjs` 的长连接、用量统计、回答缓存和帮助路由已拆到 `lib/`；
+旧飞书 Open API 隔离在 `worker/src/legacy/`，核心建单链路不依赖它。
 
 ## 已知限制
 
@@ -268,3 +268,7 @@ npm run scan:secrets
 ## 许可证
 
 MIT，详见 [LICENSE](LICENSE)。
+
+## 项目续接
+
+[项目交接与验证状态](docs/PROJECT_STATUS.md)：关键规则、已知限制与后续验证。
