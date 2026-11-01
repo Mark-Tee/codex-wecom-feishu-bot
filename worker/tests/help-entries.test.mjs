@@ -19,7 +19,10 @@ test("帮助文本覆盖半自动闭环命令", () => {
   assert.match(text, /\/pending/);
   assert.match(text, /\/cancel <短号>/);
   assert.match(text, /示例：\/done 12/);
-  assert.match(text, /指派人员和陪同人都使用当前会话使用人/);
+  assert.match(text, /普通值班两个人员字段使用当前使用人/);
+  assert.match(text, /动力值班继续留空/);
+  assert.match(text, /每天08:20刷新/);
+  assert.match(text, /收到工单的北京时间班次/);
   assert.match(text, /白班 WD、夜班 WN/);
   assert.match(text, /任务列表号后三位/);
   assert.match(text, /字段缺失时会尝试自动发现/);

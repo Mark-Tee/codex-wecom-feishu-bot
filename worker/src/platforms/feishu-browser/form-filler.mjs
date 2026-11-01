@@ -7,6 +7,7 @@ import {
   matchOption,
   normalizeOption,
   resolvePersonFields,
+  emptyPersonMismatches,
 } from "./field-options.mjs";
 import {
   datePickerVisibleScript,
@@ -243,6 +244,12 @@ export class FeishuBrowserFormFiller {
     }
   }
 
+  async #leavePersonEmpty(session, fieldId) {
+    if (!fieldId) throw new Error("缺少需要留空的人员字段映射");
+    await this.#clearSelectedValues(session, fieldId);
+    return true;
+  }
+
   async #choosePerson(session, fieldId, value) {
     if (!value) return false;
     const selector = this.#selector(fieldId);
@@ -368,6 +375,7 @@ export class FeishuBrowserFormFiller {
         const menu = root?.querySelector('.b-select-dropdown-menu');
         const editor = root?.querySelector('[contenteditable="true"]');
         return {
+          exists: Boolean(root),
           menuText: String(menu?.innerText || '').replace(/[\\u200b\\u200c\\u200d\\ufeff]/g, '').trim(),
           selectedText: [...(root?.querySelectorAll('.b-select-value-list .b-user-tag-text') || [])]
             .map((element) => String(element.textContent || '').trim())
@@ -405,8 +413,11 @@ export class FeishuBrowserFormFiller {
     contains(actual.roomTicketNo?.text, expected.roomTicketNo, "机房单号");
     contains(actual.workContent?.menuText, expected.workContent, "工作内容");
     contains(actual.specificWork?.text, expected.specificWork, "具体工作事项");
-    contains(actual.assignees?.selectedText, expected.assignees, "指派人员");
-    contains(actual.companions?.selectedText, expected.companions, "陪同人");
+    if (expected.leavePeopleEmpty) mismatches.push(...emptyPersonMismatches(actual));
+    else {
+      contains(actual.assignees?.selectedText, expected.assignees, "指派人员");
+      contains(actual.companions?.selectedText, expected.companions, "陪同人");
+    }
     if (expected.date && actual.expectedEnterAt?.inputs?.[0] !== expected.date) {
       mismatches.push("预计进入日期");
     }
@@ -487,7 +498,7 @@ export class FeishuBrowserFormFiller {
       };
     }
     const people = resolvePersonFields(task);
-    if (!people.companions) {
+    if (!people.leaveEmpty && !people.companions) {
       return {
         ok: false,
         configured: true,
@@ -555,16 +566,12 @@ export class FeishuBrowserFormFiller {
         ["工作内容", () => this.#chooseOption(session, ids.workContent, workContent)],
         ["具体工作事项", () => this.#fillText(session, ids.specificWork, card.specificWork)],
         ["预计进入时间", () => this.#fillDateTime(session, ids.expectedEnterAt, card.expectedEnterAt)],
-        ["指派人员", () => this.#choosePerson(
-          session,
-          ids.assignees,
-          people.assignees,
-        )],
-        ["陪同人", () => this.#choosePerson(
-          session,
-          ids.companions,
-          people.companions,
-        )],
+        [people.leaveEmpty ? "指派人员（留空）" : "指派人员", () => people.leaveEmpty
+          ? this.#leavePersonEmpty(session, ids.assignees)
+          : this.#choosePerson(session, ids.assignees, people.assignees)],
+        [people.leaveEmpty ? "陪同人（留空）" : "陪同人", () => people.leaveEmpty
+          ? this.#leavePersonEmpty(session, ids.companions)
+          : this.#choosePerson(session, ids.companions, people.companions)],
       ];
       for (const [label, action] of actions) {
         stage = `fill:${label}`;
@@ -607,6 +614,7 @@ export class FeishuBrowserFormFiller {
         specificWork: card.specificWork,
         assignees: people.assignees,
         companions: people.companions,
+        leavePeopleEmpty: people.leaveEmpty,
         date: expectedDate,
         time: expectedTime,
       });

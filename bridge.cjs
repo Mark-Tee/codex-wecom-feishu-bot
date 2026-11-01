@@ -10,6 +10,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn, execFileSync } = require("child_process");
 const http = require("http");
+const { startPowerRosterRefresh } = require("./lib/power-roster-refresh.cjs");
 const { createAnswerCache } = require("./lib/answer-cache.cjs");
 const { createHelpRouter } = require("./lib/help-router.cjs");
 const { createUsageTracker } = require("./lib/usage-tracker.cjs");
@@ -1032,6 +1033,11 @@ function cleanupCaches() {
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
   {
+    id: "power-duty",
+    aliases: ["动力值班"],
+    usage: "【动力值班】\n启用后自动按收单时间匹配在线排班的动力白班/夜班人员。只创建飞书单，指派人员、陪同人留空，不生成周报或交接班。\n示例：当班使用人直接发工单；未提交时 /fill 12 重试，无需 /done。\n每日08:20刷新，停机恢复后补查，建单前重新读取；排班缺失或读取失败时停止，不用旧缓存猜测。",
+  },
+  {
     id: "image",
     aliases: ["图片", "图像", "看图", "识图", "截图", "ocr", "文字识别", "照片"],
     usage: "【图片识别】\n触发：直接发图片（私聊），或群里发图文混排\n说明：文字类问题走本地 OCR（约 2 秒），其他交给视觉模型。",
@@ -1074,6 +1080,7 @@ const FEATURES = [
 ];
 
 const FULL_HELP = [
+  "动力值班      —— 自动读排班，仅建飞书单，两个人员字段留空，无需 /done",
   "可用指令与触发词：",
   "工单图片 / /draft —— 解析、核对并创建飞书任务",
   "/fill <短号>  —— 重新填写飞书",
@@ -1697,5 +1704,12 @@ if (!process.argv.includes("--ask") && !dutyDryRunMode) {
   setInterval(refreshSystemInfo, 30000);
   startNotifyServer();
   connection.start();
+  if (cfg.dutyAgent.enabled) {
+    startPowerRosterRefresh({
+      workerRoot: cfg.dutyAgent.repoPath,
+      configPath: cfg.dutyAgent.configPath,
+      log,
+    }).catch(() => log("动力值班排班定时刷新未启动，请检查worker配置"));
+  }
   log("bridge started, workdir =", cfg.workdir, "| codex =", CODEX_EXE);
 }

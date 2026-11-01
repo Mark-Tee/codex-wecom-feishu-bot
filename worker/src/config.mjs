@@ -35,6 +35,11 @@ export function loadConfig(configPath = path.resolve("config.json")) {
   config.duty.workflowMode = ["manual-feishu", "direct-draft"].includes(config.duty.workflowMode)
     ? config.duty.workflowMode
     : "manual-feishu";
+  config.duty.powerDuty = {
+    enabled: Boolean(config.duty.powerDuty?.enabled),
+    refreshTime: "08:20",
+    cachePath: path.join(config.dataDir, "cache", "power-roster.json"),
+  };
   const browser = config.feishuBrowser || {};
   config.feishuBrowser = {
     enabled: Boolean(browser.enabled),

@@ -1,4 +1,6 @@
 import crypto from "node:crypto";
+import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
+import { buildPowerDutyPrompt } from "../core/power-duty-prompt.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { buildDutyPrompt } from "../core/duty-prompt.mjs";
@@ -304,7 +306,7 @@ export class ConversationService {
       await task.responder.replyProgress(
         requestId("stream"),
         task.kind === "duty" || task.kind === "done"
-          ? `**腾讯文档草稿未更新**\n\n${error.message}`
+          ? `**工单处理未完成**\n\n${error.message}`
           : `**Codex 执行失败**\n\n${error.message}`,
         true,
       ).catch(() => {});
@@ -318,7 +320,14 @@ export class ConversationService {
     const streamId = requestId("stream");
     const receivedAt = message.receivedAt || new Date().toISOString();
     const promptSource = `${message.text || ""}\n${message.ocrText || ""}`;
-    const context = await buildDutyContext({
+    const powerDuty = this.config.duty.powerDuty?.enabled
+      ? await readPowerRoster({
+        client: this.docsClient, config: this.dutyConfig, receivedAt, operator,
+        cachePath: this.config.duty.powerDuty.cachePath,
+      })
+      : null;
+    const powerOnly = Boolean(powerDuty?.matched);
+    const context = powerOnly ? { powerDuty, schedule: [] } : await buildDutyContext({
       client: this.docsClient,
       config: this.dutyConfig,
       prompt: promptSource,
@@ -338,7 +347,7 @@ export class ConversationService {
       return;
     }
 
-    const prompt = buildDutyPrompt({
+    const prompt = powerOnly ? buildPowerDutyPrompt({ message: { ...message, receivedAt }, context: powerDuty }) : buildDutyPrompt({
       userText: message.text,
       context,
       ocrText: message.ocrText,
@@ -379,7 +388,7 @@ export class ConversationService {
       return;
     }
 
-    const normalized = normalizeDutySpec({
+    const normalized = powerOnly ? { weeklyRows: [], handoverRows: [] } : normalizeDutySpec({
       weeklyRows: parsed.weeklyRows,
       handoverRows: parsed.handoverRows,
     }, operator);
@@ -402,14 +411,15 @@ export class ConversationService {
       );
       return;
     }
-    const taskDir = path.join(this.config.runtime.specRoot, `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
-    fs.mkdirSync(taskDir, { recursive: true });
-    const specPath = path.join(taskDir, "draft-spec.json");
-    fs.writeFileSync(specPath, JSON.stringify(normalized, null, 2), "utf8");
-    const currentDate = inferShiftDateFromSpec(normalized, context);
+    if (!powerOnly) {
+      const taskDir = path.join(this.config.runtime.specRoot, `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
+      fs.mkdirSync(taskDir, { recursive: true });
+      fs.writeFileSync(path.join(taskDir, "draft-spec.json"), JSON.stringify(normalized, null, 2), "utf8");
+    }
+    const currentDate = powerOnly ? powerDuty.date : inferShiftDateFromSpec(normalized, context);
     this.#setChatValue("pendingDuty", message.chatId, null);
 
-    if (this.config.duty.workflowMode === "direct-draft") {
+    if (!powerOnly && this.config.duty.workflowMode === "direct-draft") {
       const update = await this.draftRepository.update(normalized, {
         currentDate,
         previousDate: context.previousWorkedDate,
@@ -438,6 +448,8 @@ export class ConversationService {
       })),
       fillCard,
       draftSpec: normalized,
+      workflowMode: powerOnly ? "power-duty" : this.config.duty.workflowMode,
+      powerDuty: powerOnly ? powerDuty : null,
       currentDate,
       previousDate: context.previousWorkedDate,
     });
@@ -450,6 +462,10 @@ export class ConversationService {
       browserStatus = formatBrowserFillSummary(browserResult, {
         autoSubmit: this.config.feishuBrowser?.autoSubmit,
       });
+    }
+    if (powerOnly) {
+      await this.#finishPowerFill(pending, browserResult, message, responder, streamId);
+      return;
     }
     if (browserResult?.submitted) {
       await responder.replyProgress(
@@ -473,6 +489,20 @@ export class ConversationService {
       ].filter(Boolean).join("\n\n"),
       true,
     );
+  }
+
+  async #finishPowerFill(pending, result, message, responder, streamId) {
+    if (result?.submitted && result.verification?.ok) {
+      this.pendingTasks.complete(pending.id, message.chatId, { taskNumber: result.taskNumber, workflowMode: "power-duty" });
+    }
+    const text = [
+      "**动力值班：仅建飞书单**",
+      `按收单时间判断：${pending.powerDuty.date} ${pending.powerDuty.kind}`,
+      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, powerDuty: true }),
+      `本地短号：${pending.id}；指派人员、陪同人留空。`,
+      result?.submitted ? "不生成周报和交接班草稿，无需 /done。" : `飞书尚未确认提交，可核对后发送 /fill ${pending.id}。不生成腾讯草稿。`,
+    ].filter(Boolean).join("\n\n");
+    await responder.replyProgress(streamId, text, true);
   }
 
   async #runBrowserFillTask(task) {
@@ -508,10 +538,25 @@ export class ConversationService {
       );
       return;
     }
+    if (this.config.duty.powerDuty?.enabled) {
+      const latest = await readPowerRoster({
+        client: this.docsClient, config: this.dutyConfig,
+        receivedAt: pending.receivedAt, operator: pending.operator,
+        cachePath: this.config.duty.powerDuty.cachePath,
+      });
+      if (latest.matched !== (pending.workflowMode === "power-duty")) {
+        await responder.replyProgress(streamId, "在线排班已变更，原工单模式可能不适用。请重新发送工单核对，暂不提交飞书。", true);
+        return;
+      }
+    }
     const result = await this.browserFiller.fill(pending);
     pending = this.#reassignTaskIdFromBrowser(pending, message.chatId, result);
     localTaskId = pending.id;
     this.pendingTasks.setBrowserFill(localTaskId, message.chatId, result);
+    if (pending.workflowMode === "power-duty") {
+      await this.#finishPowerFill(pending, result, message, responder, streamId);
+      return;
+    }
     await responder.replyProgress(
       streamId,
       [
@@ -527,6 +572,11 @@ export class ConversationService {
   async #runDone(task) {
     const { message, responder, localTaskId } = task;
     const streamId = requestId("stream");
+    const existing = this.pendingTasks.find(localTaskId, message.chatId);
+    if (existing?.workflowMode === "power-duty") {
+      await responder.replyProgress(streamId, `动力值班短号 ${localTaskId} 仅负责飞书建单，不生成腾讯周报或交接班草稿，无需 /done。`, true);
+      return;
+    }
     const claim = this.pendingTasks.claim(localTaskId, message.chatId);
     if (!claim.ok) {
       const messages = {

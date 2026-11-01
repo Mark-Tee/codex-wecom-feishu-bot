@@ -38,9 +38,16 @@ export function chooseWorkContent(fillCard = {}, options = []) {
 }
 
 export function resolvePersonFields(task = {}) {
+  if (task.workflowMode === "power-duty") return { assignees: "", companions: "", leaveEmpty: true };
   const operator = String(task.operator || "").trim();
   return {
     assignees: operator,
     companions: operator,
   };
+}
+
+export function emptyPersonMismatches(actual = {}) {
+  return [["assignees", "指派人员"], ["companions", "陪同人"]]
+    .filter(([key]) => !actual[key]?.exists || String(actual[key]?.selectedText || "").trim())
+    .map(([, label]) => `${label}必须留空`);
 }

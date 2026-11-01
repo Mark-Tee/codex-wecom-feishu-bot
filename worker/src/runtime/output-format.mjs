@@ -12,7 +12,7 @@ export function formatPendingTasks(tasks) {
         task.browserFill?.ok ? " · 浏览器已填" : ""
       }`
     )),
-    "确认飞书已提交后发送：/done <短号>",
+    tasks.some((task) => task.workflowMode !== "power-duty") ? "普通工单确认飞书已提交后发送：/done <短号>" : "动力值班只建飞书单，无需 /done。",
   ].join("\n");
 }
 
@@ -38,7 +38,7 @@ export function formatStatus({
   ].join("\n");
 }
 
-export function formatBrowserFillSummary(result, { autoSubmit = false } = {}) {
+export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty = false } = {}) {
   if (!result?.configured) return "";
   const filled = (result.filled || []).join("、");
   const skipped = (result.skipped || []).join("；");
@@ -47,7 +47,7 @@ export function formatBrowserFillSummary(result, { autoSubmit = false } = {}) {
       "**飞书已自动核对并提交**",
       result.taskNumber ? `任务列表：${result.taskNumber}` : "",
       `已填：${filled || "无"}`,
-      "腾讯草稿尚未生成，请发送 /done <短号>。",
+      powerDuty ? "动力值班仅建飞书单，不生成腾讯草稿。" : "腾讯草稿尚未生成，请发送 /done <短号>。",
     ].filter(Boolean).join("\n");
   }
   if (result.ok) {

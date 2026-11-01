@@ -19,7 +19,10 @@
     "prewarm": true,
     "onlineWrite": true,
     "pinyinHints": {
-      "YOUR_NAME": ["your-pinyin", "initials"]
+      "YOUR_NAME": [
+        "your-pinyin",
+        "initials"
+      ]
     },
     "holidayNotification": {
       "workLocation": "DEFAULT_LOCATION",
@@ -35,6 +38,10 @@
       "end": "15:00",
       "feedback": "已完成",
       "actualDuration": "6时00分"
+    },
+    "powerDuty": {
+      "enabled": false,
+      "refreshTime": "08:20"
     }
   },
   "feishuBrowser": {
@@ -57,8 +64,16 @@
       "screenshotDir": "data/feishu-browser-diagnostics"
     },
     "options": {
-      "source": ["事务工单", "上下架", "布线理线", "其他任务"],
-      "location": ["YOUR_LOCATION_A", "YOUR_LOCATION_B"],
+      "source": [
+        "事务工单",
+        "上下架",
+        "布线理线",
+        "其他任务"
+      ],
+      "location": [
+        "YOUR_LOCATION_A",
+        "YOUR_LOCATION_B"
+      ],
       "workContent": [
         "故障维修、隐患整改",
         "硬件带外不通，测试设备排查",
