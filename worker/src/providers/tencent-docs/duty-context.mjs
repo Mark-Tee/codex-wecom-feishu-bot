@@ -108,7 +108,7 @@ export async function buildDutyContext({
     const rowStyles = styles.get(entry.index) || [];
     const nextStyles = styles.get(entry.index + 1) || [];
     const classified = shift.start || effective.site_rules?.enabled
-      ? classifyRole({ row: entry.row, styles: rowStyles, headers, config: effective, nextStyles }) : null;
+      ? classifyRole({ row: entry.row, styles: rowStyles, headers, config: effective, nextStyles, minutes: shift.start?.minutes ?? null }) : null;
     const role = shift.start || classified?.role === "offsite_training"
       ? classified
       : { role: "check-schedule", reason: "OCR 未提取到开始时间，需结合图片判断日期" };

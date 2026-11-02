@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const { startScheduleBroadcast } = require("./lib/schedule-broadcast.cjs");
+let scheduleBroadcast = null;
 /**
  * 企业微信智能机器人（长连接）<-> 本机 Codex 桥接服务。
  * 收到群里 @机器人 的文本 -> 调 codex exec 处理 -> 流式回帖到原会话。
@@ -1033,6 +1035,10 @@ function cleanupCaches() {
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
   {
+    id: "schedule-broadcast", aliases: ["排班", "排班群", "白班辅值"],
+    usage: "【每日排班】\n群内已授权操作者@机器人：绑定排班群 / 解绑排班群 / 排班推送状态 / 查看排班，均无参数。\n示例：@机器人 绑定排班群。每日北京时间08:20实时读在线表后发今天和明天；绑定已过时间则次日开始。重启补发，发送结果不明不自动重复。仅绑定一个群，不使用单聊；发送后不追踪变更，查看排班可重新读表。周末（含补班）及节假日无白班辅值，夜班也无辅值。数据核验失败不发旧缓存。",
+  },
+  {
     id: "site-assignment",
     aliases: ["异地排班", "部门排班", "跨站点"],
     usage: "【跨站点排班】\n按配置中的部门名单、辅值列和异地岗位判断工作站点。异地安排不自动生成本地工作记录，打卡地点不等于工作地点；明确本地实际工单单独登记。\n示例：直接发送含明确地点和单号的工单。\n限制：site_rules需启用；无固定岗位的在岗白班为本站待命，只记实际工单，不自动补记录；休假及夜班后休息不判待命。缺列或岗位冲突时停止，不自动推断概率事件。岗位姓名前数字仅匹配时忽略，不解释含义、不改原文。仅飞书任务无需/done。",
@@ -1085,6 +1091,9 @@ const FEATURES = [
 ];
 
 const FULL_HELP = [
+  "绑定排班群 / 解绑排班群 —— 群内@，无参数，仅授权操作者，每天08:20推送今天和明天",
+  "查看排班 / 排班推送状态 —— 群内@，无参数，实时查询或查看状态；发送后不追踪调班，读表失败不发旧数据",
+  "白班辅值 —— 仅周一至周五非节假日白班，周末补班亦无辅值",
   "跨站点排班    —— 异地安排不自动补本地记录，打卡地点不等于工作地点",
   "动力值班      —— 自动读排班，仅建飞书单，两个人员字段留空，无需 /done",
   "可用指令与触发词：",
@@ -1189,6 +1198,13 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     log("unauthorized user", userId);
     return;
   }
+
+  if (["绑定排班群", "解绑排班群", "排班推送状态", "查看排班"].includes(prompt)
+      && !cfg.allowUsers.includes(userId) && !operators.includes(userId)) {
+    await replyText(frame, "请先完成操作者配对，再使用排班群指令。");
+    return;
+  }
+  if (scheduleBroadcast && await scheduleBroadcast.command(frame, prompt)) return;
 
   if (/^(\/status|状态|运行状态|健康)/i.test(prompt)) {
     const up = Math.round((Date.now() - STARTED_AT) / 1000);
@@ -1709,6 +1725,11 @@ if (!process.argv.includes("--ask") && !dutyDryRunMode) {
   refreshSystemInfo();
   setInterval(refreshSystemInfo, 30000);
   startNotifyServer();
+  if (cfg.dutyAgent.enabled) scheduleBroadcast = startScheduleBroadcast({
+    workerRoot: cfg.dutyAgent.repoPath, configPath: cfg.dutyAgent.configPath,
+    state, save: saveState, send: sendChatMessage, reply: replyText,
+    ready: () => connection.authenticated, log,
+  });
   connection.start();
   if (cfg.dutyAgent.enabled) {
     startPowerRosterRefresh({

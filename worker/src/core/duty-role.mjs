@@ -1,4 +1,5 @@
 import { rosterNames } from "./roster-names.mjs";
+import { auxiliaryPolicy } from "./auxiliary-policy.mjs";
 import { resolveSiteAssignment } from "./site-assignment.mjs";
 export function colorMatches(value, expected) {
   const actual = String(value || "").toUpperCase();
@@ -10,7 +11,7 @@ function cellFill(styles, col) {
   return styles.find((cell) => cell.col === col)?.background_color || "";
 }
 
-export function classifyRole({ row, styles, headers, config, nextStyles = [] }) {
+export function classifyRole({ row, styles, headers, config, nextStyles = [], minutes = null }) {
   const operator = config.operator_name;
   const assignment = resolveSiteAssignment({ row, headers, config, operator });
   const operatorIndex = headers.indexOf(operator);
@@ -43,8 +44,9 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
   }
   if (assignment?.offsite) return { role: "offsite_training", assignment, reason: "当日安排在异地，不按本地站点打卡推定工作地点" };
 
-  if (auxiliaryMatch && holiday) {
-    return { role: "ambiguous", reason: `法定节假日${auxiliaryHeader}列不应有人` };
+  if (auxiliaryMatch) {
+    const policy = auxiliaryPolicy({date: row[headers.indexOf("日期")], holiday, minutes});
+    if (!policy.allowed) return { role: "ambiguous", requiresClarification: true, reason: `${policy.reason}，请核对原表白班辅值及实际岗位` };
   }
   if (auxiliaryMatch && (whitePrimaryFill || nightPrimaryFill)) {
     return { role: "ambiguous", reason: `${auxiliaryHeader}与主值班次冲突` };
