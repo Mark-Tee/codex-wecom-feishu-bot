@@ -61,7 +61,27 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     return {name: group.name, white, night, auxiliary: auxiliary.allowed ? aux : null, offsite, offsiteRole: group.offsite_role, standby};
   });
   for (const name of [...power.white, ...power.night]) if (offsiteNames.has(name)) throw new Error("动力与异地岗位冲突");
-  return {date, groups, power, warnings};
+  const people = departments.flatMap((department) => department.members.map((name) => {
+    const group = groups.find((item) => item.name === department.name);
+    const raw = String(row[headers.indexOf(name)] || "").trim();
+    const offsite = group.offsite.find((item) => item.name === name);
+    const roles = [];
+    if (offsite) roles.push(`${raw || "当日"}·${department.offsite_role}（${offsite.slot}）`);
+    else {
+      if (group.white.includes(name)) roles.push("白班主值");
+      if (group.night.includes(name)) roles.push("夜班主值");
+      if (group.auxiliary?.includes(name)) roles.push("白班辅值");
+      if (group.standby.includes(name)) roles.push("白班待命");
+    }
+    const homeRole = roles.length > 0 && !offsite;
+    if (power.white.includes(name)) roles.push("动力白班");
+    if (power.night.includes(name)) roles.push("动力夜班");
+    const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw);
+    if (leave) roles.push(raw);
+    if (!roles.length) roles.push(raw ? `${raw}（岗位待核对）` : "原表空白，需结合前夜排班核对");
+    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave};
+  }));
+  return {date, groups, power, warnings, people};
 }
 
 export async function readScheduleBroadcast({ client, config, at = new Date(), offsets = [0, 1] }) {
@@ -99,21 +119,44 @@ export async function readScheduleBroadcast({ client, config, at = new Date(), o
   return {days, fetchedAt: new Date().toISOString(), home: config.site_rules.home_site, offsite: config.site_rules.offsite_site};
 }
 
-export function formatScheduleBroadcast(snapshot) {
+export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
   const names = (list) => list.map(clean).join("、") || "未安排";
   const lines = [snapshot.days.length === 1 ? `【${snapshot.days[0].label === "明天" ? "次日" : "今日"}排班】` : "【今日 · 明日排班】"];
+  const person = snapshot.days[0].people?.find((item) => item.name === viewer);
+  if (person) {
+    lines.push("", `**你的排班｜${clean(viewer)} · ${clean(person.department)}**`);
+    snapshot.days.forEach((day, i) => {
+      const own = day.people?.find((item) => item.name === viewer);
+      lines.push(`${day.label || (i === 0 ? "今天" : "明天")}：${own ? names(own.roles) + (own.site ? `｜${clean(own.site)}（排班）` : "") : "身份不在当日名单，待核对"}`);
+    });
+  } else if (viewer) lines.push("", "个人身份不在本次排班名单中，以下按全员视角展示，请核对排班身份。");
   snapshot.days.forEach((day, i) => {
     const date = new Date(`${day.date.slice(0,4)}-${day.date.slice(4,6)}-${day.date.slice(6,8)}T00:00:00Z`);
     lines.push("", `**${day.label || (i === 0 ? "今天" : "明天")} ${day.date.slice(4,6)}/${day.date.slice(6,8)} 周${"日一二三四五六"[date.getUTCDay()]}**`);
-    for (const group of day.groups) {
-      lines.push(`${clean(group.name)}｜白班主值 ${names(group.white)} · 夜班主值 ${names(group.night)}`, `白班辅值：${group.auxiliary === null ? "无（周末/节假日）" : names(group.auxiliary)}`);
-      if (group.offsite.length) lines.push(`${clean(snapshot.offsite)}${clean(group.offsiteRole)}：${group.offsite.map((p) => `${clean(p.name)}（${clean(p.slot)}）`).join("、")}`);
-      if (group.standby.length) lines.push(`${clean(snapshot.home)}待命：${names(group.standby)}`);
+    const own = day.people?.find((item) => item.name === viewer);
+    const groups = [...day.groups].sort((a,b) => Number(b.name === own?.department) - Number(a.name === own?.department));
+    const sites = own?.site === snapshot.offsite ? [snapshot.offsite,snapshot.home] : [snapshot.home,snapshot.offsite];
+    for (const site of sites) {
+      if (site === snapshot.offsite && !groups.some((group) => group.offsite.length)) continue;
+      lines.push(`【${clean(site)}】`);
+      for (const group of groups) {
+        if (site === snapshot.offsite) {
+          if (group.offsite.length) lines.push(`${clean(group.name)}${clean(group.offsiteRole)}：${group.offsite.map((p) => `${clean(p.name)}（${clean(p.slot)}）`).join("、")}`);
+        } else {
+          lines.push(`${clean(group.name)}｜白班主值 ${names(group.white)} · 夜班主值 ${names(group.night)}`, `白班辅值：${group.auxiliary === null ? "无（周末/节假日）" : names(group.auxiliary)}`);
+          const homePower = (kind) => day.power[kind].filter((name) => day.people?.some((p) => p.name === name && p.department === group.name && p.site === snapshot.home));
+          const whitePower = homePower("white"), nightPower = homePower("night");
+          if (whitePower.length || nightPower.length) lines.push(`动力｜白班 ${names(whitePower)} · 夜班 ${names(nightPower)}`);
+          if (group.standby.length) lines.push(`待命：${names(group.standby)}`);
+        }
+      }
     }
-    lines.push(`动力｜白班 ${names(day.power.white)} · 夜班 ${names(day.power.night)}`);
+    const unknownPower = (kind) => day.power[kind].filter((name) => !day.people?.some((p) => p.name === name && p.site));
+    const whiteUnknown = unknownPower("white"), nightUnknown = unknownPower("night");
+    if (whiteUnknown.length || nightUnknown.length) lines.push(`动力（地点待核对）｜白班 ${names(whiteUnknown)} · 夜班 ${names(nightUnknown)}`);
     day.warnings.forEach((warning) => lines.push(`⚠ ${clean(warning)}`));
   });
-  lines.push("", "白班08:30–17:30｜夜班17:30–次日08:30", "白班辅值09:00–15:00；08:30前仍属前一日夜班。", "岗位兼任按原表并列；待命仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "发送后调班请以在线表为准，可@机器人发送“查看排班”重新读取。");
+  lines.push("", "白班08:30–17:30｜夜班17:30–次日08:30", "白班辅值09:00–15:00；08:30前仍属前一日夜班。", "以上为各日期排班，不代表实际出勤；兼任岗位并列，待命仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "发送后调班请以在线表为准，可@机器人发送“查看排班”重新读取。");
   const text = lines.join("\n");
   if (Buffer.byteLength(text, "utf8") > 3900) throw new Error("排班通知过长，停止发送以免截断");
   return text;

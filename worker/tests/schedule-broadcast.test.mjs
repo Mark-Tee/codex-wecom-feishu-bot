@@ -13,6 +13,21 @@ test("summary roles, overlapping power primary, standby and numeric prefix",()=>
  assert.deepEqual(day.groups[0].auxiliary,["丙"]);assert.deepEqual(day.groups[0].standby,["丁"]);
  const text=formatScheduleBroadcast({days:[day,day],fetchedAt:"2026-11-02T00:20:00Z",home:"HOME_SITE",offsite:"OFFSITE_SITE"});assert.match(text,/白班辅值：丙/);assert.match(text,/在线表读取/);
 });
+test("personal first, preferred site then department, no mutation or cross-user leak",()=>{
+ const system={name:"测试系统",white:["系统甲"],night:["系统乙"],auxiliary:[],standby:[],offsite:[{name:"系统丙",slot:"学习1"}],offsiteRole:"测试"};
+ const network={name:"测试网络",white:["网络甲"],night:["网络乙"],auxiliary:[],standby:["网络丁"],offsite:[{name:"网络丙",slot:"异地1"}],offsiteRole:"告警"};
+ const snapshot={home:"HOME_SITE",offsite:"OFFSITE_SITE",fetchedAt:"2026-11-02T01:00:00Z",days:[{date:"20261102",label:"今天",groups:[system,network],power:{white:["系统甲"],night:["网络乙"]},warnings:[],people:[{name:"网络甲",department:"测试网络",roles:["白班主值"],site:"HOME_SITE"},{name:"网络丙",department:"测试网络",roles:["白班·告警"],site:"OFFSITE_SITE"},{name:"网络休",department:"测试网络",roles:["调休"],site:"",leave:true}]}]};
+ const home=formatScheduleBroadcast(snapshot,{viewer:"网络甲"});assert.ok(home.indexOf("你的排班")<home.indexOf("【HOME SITE】"));assert.ok(home.indexOf("测试网络｜")<home.indexOf("测试系统｜"));assert.ok(home.indexOf("【HOME SITE】")<home.indexOf("【OFFSITE SITE】"));
+ const away=formatScheduleBroadcast(snapshot,{viewer:"网络丙"});assert.ok(away.indexOf("【OFFSITE SITE】")<away.indexOf("【HOME SITE】"));assert.ok(away.indexOf("测试网络告警")<away.indexOf("测试系统测试"));
+ const rest=formatScheduleBroadcast(snapshot,{viewer:"网络休"});assert.match(rest,/今天：调休\n/);assert.doesNotMatch(rest,/今天：调休｜HOME_SITE/);
+ const all=formatScheduleBroadcast(snapshot);assert.doesNotMatch(all,/你的排班/);assert.ok(all.indexOf("测试系统｜")<all.indexOf("测试网络｜"));assert.equal(snapshot.days[0].groups[0],system);
+});
+test("personal role preserves dual power/main roles and does not turn blank into standby",()=>{
+ const f=fixture();const day=summarizeSchedule(f);assert.deepEqual(day.people.find(p=>p.name==="甲").roles,["白班主值","动力白班"]);
+ f.rows[1][6]="";const blank=summarizeSchedule(f).people.find(p=>p.name==="丁");assert.equal(blank.site,"");assert.match(blank.roles[0],/原表空白/);
+ f.rows[1][6]="调休";const rest=summarizeSchedule(f).people.find(p=>p.name==="丁");assert.equal(rest.leave,true);assert.deepEqual(rest.roles,["调休"]);
+ f.rows[1][6]="白班";f.rows[1][8]="2丁";const away=summarizeSchedule(f).people.find(p=>p.name==="丁");assert.equal(away.site,"OFFSITE_SITE");assert.match(away.roles[0],/学习/);
+});
 test("weekends including makeup, holidays, and nights have no auxiliary",()=>{
  for(const date of ["20261107","20261108"]) {assert.equal(auxiliaryPolicy({date}).allowed,false);assert.equal(summarizeSchedule(fixture(date)).groups[0].auxiliary,null);}
  assert.equal(auxiliaryPolicy({date:"20261102",holiday:true}).allowed,false);

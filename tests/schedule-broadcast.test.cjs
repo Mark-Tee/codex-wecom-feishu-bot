@@ -34,7 +34,19 @@ test("binding is group-only and does not silently replace another group",async()
  await f.c.command({body:{chattype:"group",chatid:"another"}},"绑定排班群");assert.equal(f.state.__scheduleGroup.chatid,"test-group");
  await f.c.command(group,"解绑排班群");assert.equal(f.state.__scheduleGroup,undefined);
  await f.c.command(group,"绑定排班群");await f.c.tick();assert.equal(f.sent.length,0);
- await f.c.command(group,"查看排班");assert.deepEqual(f.replies.slice(-1),["fresh"]);
+ await f.c.command(group,"查看排班");assert.match(f.replies.at(-1),/fresh$/);
+});
+test("personal identity is per sender and scheduled broadcasts never inherit it",async()=>{
+ const selections=[];const f=fixture({members:async()=>["测试甲","测试乙"],read:async(_,selection)=>{selections.push(selection);return "fresh";}});
+ const a={body:{chattype:"group",chatid:"test-group",from:{userid:"user-a"}}};
+ const b={body:{chattype:"group",chatid:"test-group",from:{userid:"user-b"}}};
+ await f.c.command(a,"排班身份 测试甲");await f.c.command(b,"排班身份 测试乙");
+ await f.c.command(a,"查看排班");await f.c.command(b,"查看排班");
+ await createScheduleBroadcast(f.args).command(a,"查看排班");
+ await f.c.tick();assert.deepEqual(selections,[{viewer:"测试甲"},{viewer:"测试乙"},{viewer:"测试甲"},{offsets:[0]}]);
+ await f.c.command(a,"排班身份 猜测名");assert.equal(f.state.__schedulePeople["user-a"],"测试甲");
+ await f.c.command({body:{chattype:"group",chatid:"test-group"}},"排班身份 测试甲");assert.match(f.replies.at(-1),/未取得发起人/);
+ assert.equal(await f.c.command(a,"排班身份 测试 甲"),true);assert.match(f.replies.at(-1),/用法/);
 });
 
 test("morning and evening select one date, each deduplicates independently", async()=>{
