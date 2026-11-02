@@ -758,7 +758,7 @@ async function processDutyAgentTask({ frame, prompt, chatKey, userId, images = [
     await replyStream(
       frame,
       streamId,
-      "收到工单，正在识别字段、核对单号并提交飞书…",
+      "收到工单，正在识别字段并核对处理条件…",
       false,
     ).catch(() => {});
     const result = await runDutyAgent({

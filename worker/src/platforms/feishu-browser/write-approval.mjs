@@ -44,6 +44,6 @@ export function claimWriteApproval(config, task, now=Date.now()) {
   return {mark(stage){fs.appendFileSync(used,JSON.stringify({stage,at:new Date().toISOString()})+"\n");}};
 }
 export function assertEmptyNewRecord(values) {
-  if(!Array.isArray(values) || values.some(value=>String(value||"").trim()))
+  if(!Array.isArray(values) || values.some(value=>String(value||"").replace(/[\u200B-\u200D\u2060\uFEFF]/gu,"").trim()))
     throw new Error("飞书写入已拦截：新记录关键字段不是全空，禁止复用已有记录");
 }

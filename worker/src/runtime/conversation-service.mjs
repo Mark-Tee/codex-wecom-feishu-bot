@@ -1,3 +1,5 @@
+import {buildFeishuTestPrompt} from "../core/feishu-test-prompt.mjs";
+import {resolveTaskShiftForWorkOrder,parseExpectedEnterAt} from "../core/task-workflow.mjs";
 import remotePolicy from "../core/remote-policy.cjs";
 import crypto from "node:crypto";
 import { applySiteRecordRules } from "../core/site-assignment.mjs";
@@ -334,7 +336,8 @@ export class ConversationService {
       })
       : null;
     const powerOnly = Boolean(powerDuty?.matched);
-    const context = powerOnly ? { powerDuty, schedule: [] } : await buildDutyContext({
+    const feishuTest=Boolean(this.config.feishuBrowser?.writeApprovalFile);
+    const context = powerOnly || feishuTest ? { powerDuty, schedule: [] } : await buildDutyContext({
       client: this.docsClient,
       config: this.dutyConfig,
       prompt: promptSource,
@@ -354,7 +357,7 @@ export class ConversationService {
       return;
     }
 
-    const prompt = powerOnly ? buildPowerDutyPrompt({ message: { ...message, receivedAt }, context: powerDuty }) : buildDutyPrompt({
+    const prompt = feishuTest ? buildFeishuTestPrompt({message:{...message,receivedAt},powerDuty,browserConfig:this.config.feishuBrowser}) : powerOnly ? buildPowerDutyPrompt({ message: { ...message, receivedAt }, context: powerDuty }) : buildDutyPrompt({
       userText: message.text,
       context,
       ocrText: message.ocrText,
@@ -395,16 +398,23 @@ export class ConversationService {
       return;
     }
 
-    let normalized = powerOnly ? { weeklyRows: [], handoverRows: [] } : normalizeDutySpec({
+    let normalized = powerOnly || feishuTest ? { weeklyRows: [], handoverRows: [] } : normalizeDutySpec({
       weeklyRows: parsed.weeklyRows,
       handoverRows: parsed.handoverRows,
     }, operator);
     validateDutySpec(normalized);
     const fillCard = normalizeFillCard(parsed.fillCard);
-    const sitePolicy = powerOnly ? { assignment: null, skipHomeDraft: false } : applySiteRecordRules(normalized, {
+    if(feishuTest){
+      if(!fillCard.source)fillCard.source=this.config.feishuBrowser.defaults?.source||"";
+      if(!fillCard.specificWork.startsWith("【测试勿统计】"))fillCard.specificWork="【测试勿统计】"+fillCard.specificWork;
+    }
+    if(feishuTest && !parseExpectedEnterAt(fillCard.expectedEnterAt)){
+      await responder.replyProgress(streamId,"工单原日期或时间不清楚，尚未写入飞书。请核对原图，不用收到日期代替。",true);return;
+    }
+    const sitePolicy = powerOnly || feishuTest ? { assignment: null, skipHomeDraft: false } : applySiteRecordRules(normalized, {
       context, fillCard, config: this.dutyConfig,
     });
-    if (!powerOnly) normalized = sitePolicy.spec;
+    if (!powerOnly && !feishuTest) normalized = sitePolicy.spec;
     const inferredCard = inferFillCardFromSpec(normalized);
     for (const [key, value] of Object.entries(inferredCard)) {
       if (!fillCard[key]) fillCard[key] = value;
@@ -422,15 +432,15 @@ export class ConversationService {
       );
       return;
     }
-    if (!powerOnly) {
+    if (!powerOnly && !feishuTest) {
       const taskDir = path.join(this.config.runtime.specRoot, `${Date.now()}-${crypto.randomUUID().slice(0, 8)}`);
       fs.mkdirSync(taskDir, { recursive: true });
       fs.writeFileSync(path.join(taskDir, "draft-spec.json"), JSON.stringify(normalized, null, 2), "utf8");
     }
-    const currentDate = powerOnly ? powerDuty.date : inferShiftDateFromSpec(normalized, context);
+    const currentDate = feishuTest ? resolveTaskShiftForWorkOrder({expectedEnterAt:fillCard.expectedEnterAt,receivedAt}).date : powerOnly ? powerDuty.date : inferShiftDateFromSpec(normalized, context);
     this.#setChatValue("pendingDuty", message.chatId, null);
 
-    if (!powerOnly && !sitePolicy.skipHomeDraft && this.config.duty.workflowMode === "direct-draft") {
+    if (!feishuTest && !powerOnly && !sitePolicy.skipHomeDraft && this.config.duty.workflowMode === "direct-draft") {
       const update = await this.draftRepository.update(normalized, {
         currentDate,
         previousDate: context.previousWorkedDate,
@@ -459,7 +469,7 @@ export class ConversationService {
       })),
       fillCard,
       draftSpec: normalized,
-      workflowMode: powerOnly ? "power-duty" : sitePolicy.skipHomeDraft ? "offsite-feishu" : this.config.duty.workflowMode,
+      workflowMode: powerOnly ? "power-duty" : feishuTest ? "feishu-test" : sitePolicy.skipHomeDraft ? "offsite-feishu" : this.config.duty.workflowMode,
       siteAssignment: sitePolicy.assignment,
       powerDuty: powerOnly ? powerDuty : null,
       currentDate,
@@ -498,7 +508,7 @@ export class ConversationService {
     await responder.replyProgress(
       streamId,
       [
-        formatFillCard(pending, {
+        feishuTest ? `【共享表测试：字段已识别】\n本地短号：${pending.id}\n原日期：${fillCard.expectedEnterAt}\n未写入飞书，等待本机核验与单次许可。` : formatFillCard(pending, {
           autoSubmit: Boolean(this.browserFiller?.enabled && this.config.feishuBrowser?.autoSubmit),
         }),
         browserStatus,
@@ -595,7 +605,7 @@ export class ConversationService {
         formatBrowserFillSummary(result, {
           autoSubmit: this.config.feishuBrowser?.autoSubmit,
         }),
-        `提交飞书后发送：\`/done ${localTaskId}\``,
+        this.config.feishuBrowser?.writeApprovalFile ? "本次只测试飞书，腾讯草稿不写；请等待本机读回核验。" : `提交飞书后发送：\`/done ${localTaskId}\``,
       ].filter(Boolean).join("\n\n"),
       true,
     );

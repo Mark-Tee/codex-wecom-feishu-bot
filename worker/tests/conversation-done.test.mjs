@@ -370,3 +370,18 @@ test("远程管理与源表修改拒绝且不调用模型或写表",async()=>{
  }
  assert.equal(called,0);
 });
+
+test("共享表分阶段测试不依赖腾讯周报或交接表，保留工单原日期",async()=>{
+ let reads=0,writes=0;
+ const {service,pendingTasks}=createService({update:async()=>{writes++;throw Error("must not write");},docsClient:{getSheetInfo:async()=>{reads++;throw Error("missing report sheet");}},runner:{run:async({prompt})=>{assert.match(prompt,/保留工单原日期/);return {ok:true,text:JSON.stringify({fillCard:{transactionNo:"SJSW20261026000123",roomTicketNo:"JF20261026000123",expectedEnterAt:"2026-10-26 06:00",location:"测试机房",specificWork:"测试事项"},weeklyRows:[],handoverRows:[]})};},stop(){}}});
+ service.config.feishuBrowser.writeApprovalFile="local-test-permit";service.config.feishuBrowser.defaults={source:"事务工单"};service.config.duty.workflowMode="direct-draft";
+ const collector=responseCollector();await service.handle({...message("测试工单"),images:[{path:"test-image.jpg"}]},collector.responder);
+ await waitForReply(collector.replies,"共享表测试：字段已识别");
+ assert.equal(reads,0);assert.equal(writes,0);const tasks=pendingTasks.list("chat-a");assert.equal(tasks.length,1);assert.equal(tasks[0].fillCard.expectedEnterAt,"2026-10-26 06:00");assert.equal(tasks[0].currentDate,"20261025");assert.deepEqual(tasks[0].draftSpec,{weeklyRows:[],handoverRows:[]});assert.equal(tasks[0].fillCard.source,"事务工单");assert.match(tasks[0].fillCard.specificWork,/^【测试勿统计】/);
+});
+
+test("共享表测试的填写回执不再引导写腾讯草稿",async()=>{
+ const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,requiresLocalReview:true,submitted:false,message:"需本机核准"})}});
+ service.config.feishuBrowser.writeApprovalFile="local-permit";pendingTasks.create({chatId:"chat-a",operator:"测试甲",draftSpec:validSpec(),currentDate:"20261026"});
+ const c=responseCollector();await service.handle(message("/fill 1"),c.responder);await waitForReply(c.replies,"本次只测试飞书");assert.doesNotMatch(c.replies.at(-1).text,/提交飞书后发送/);
+});

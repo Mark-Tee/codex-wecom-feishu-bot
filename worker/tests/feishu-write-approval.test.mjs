@@ -37,7 +37,7 @@ test("missing approval prevents even opening the browser or touching the table",
  try{const result=await new FeishuBrowserFormFiller({config}).fill(task);assert.equal(opens,0);assert.equal(result.submitted,false);assert.equal(result.requiresLocalReview,true);assert.match(result.message,/共享表测试保护/);assert.doesNotMatch(formatBrowserFillSummary(result),/手工提交，也可/);}finally{EdgeFormSession.open=original;}
 }));
 test("only empty fresh form values accepted, normal mode unchanged",()=>{
- assert.doesNotThrow(()=>assertEmptyNewRecord([""," "]));assert.throws(()=>assertEmptyNewRecord(["","someone else's record"]));
+ assert.doesNotThrow(()=>assertEmptyNewRecord([""," ","\u200B"," \uFEFF"]));assert.throws(()=>assertEmptyNewRecord(["\u200BSJSW-existing"]));assert.throws(()=>assertEmptyNewRecord(["","someone else's record"]));
  assert.throws(()=>assertEmptyNewRecord(null));assert.equal(claimWriteApproval({},task),null);
 });
 
