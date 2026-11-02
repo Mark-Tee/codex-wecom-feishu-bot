@@ -30,11 +30,15 @@ const WSImpl = (() => {
 })();
 
 const ROOT = __dirname;
+const {readServiceProfile} = require("./lib/service-profile.cjs");
+const {ticketRoute,normalizeTicketCommand,TICKET_HELP} = require("./lib/ticket-policy.cjs");
 const DATA_ROOT = process.env.CODEX_FEISHU_DATA_DIR || path.join(ROOT, "data");
 const configArgumentIndex = process.argv.indexOf("--config");
 const CONFIG_PATH = configArgumentIndex >= 0
   ? path.resolve(process.argv[configArgumentIndex + 1])
   : path.join(ROOT, "config.json");
+const serviceProfile = readServiceProfile(ROOT, CONFIG_PATH);
+if (serviceProfile.role === "roster") throw new Error("Use roster-bot.cjs for roster role");
 const STATE_PATH = path.join(ROOT, "state.json");
 const LOG_DIR = path.join(ROOT, "logs");
 fs.mkdirSync(LOG_DIR, { recursive: true });
@@ -1029,6 +1033,7 @@ function cleanupCaches() {
 // 全局约定：新增任何功能/命令，必须同时更新 HELP_ENTRIES 与 FULL_HELP（触发词、参数、示例、限制）。
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
+  {id:"service-role",aliases:["机器人分工","服务角色"],usage:"【服务分工】\nservice.role=roster仅查询排班与定时推送，使用roster-bot.cjs；service.role=ticket仅处理工单，使用bridge.cjs；combined兼容旧部署。\n示例：两个运行目录配置不同BotID、健康/守护端口和任务名，再运行各自install-autostart.ps1。限制：不得同BotID多开，不共用可写状态；排班无模型回退，工单帮助由/help查看。"},
   {id:"stability", aliases:["守护", "自启动", "日志轮转", "稳定性"],
    usage:"【本机稳定性守护】\n登录Windows后自动启动。运行 install-autostart.ps1 安装当前用户启动任务（权限不足时使用启动快捷方式）；start-hidden.ps1 启动守护，stop.ps1 停止并暂停计划任务，均无业务参数。\n示例：在项目目录执行 powershell -File .\\install-autostart.ps1。1个机器人加1个不联网的轻量守护；主进程退出后5秒起退避恢复，最多5分钟；本地健康检查每30秒，启动宽限2分钟，连续3次失败才回收。已有30秒心跳，90秒无响应关闭连接并重连。日志5MiB一卷保留5卷归档，守护日志1MiB；不调用模型、不用机场做健康探测。保留双端口单实例保护，手动独立进程需先停止再交给守护。"},
   {
@@ -1088,6 +1093,7 @@ const FEATURES = [
 ];
 
 const FULL_HELP = [
+  "机器人分工 —— 排班与工单可分别独立部署，凭证、端口、状态和启动任务隔离",
   "排班身份 [姓名] —— 群内@，无姓名查本人绑定；带准确姓名设置个人视角；查看排班按本人岗位、站点和部门排序，定时不受影响",
   "稳定性守护 —— 登录自启、异常恢复、连接检测、日志轮转；详询守护帮助。后台检查不调用模型",
   "绑定排班群 / 解绑排班群 —— 群内@，无参数，仅授权操作者，每天07:00发当天、17:00发次日",
@@ -1145,18 +1151,20 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     return;
   }
 
-  const originalPrompt = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
-  const dutyIntent = isDutyReportIntent(originalPrompt, images);
+  const rosterNormalized = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
+  const originalPrompt = serviceProfile.role === "ticket" ? normalizeTicketCommand(rosterNormalized) : rosterNormalized;
+  const ticketDecision = serviceProfile.role === "ticket" ? ticketRoute(originalPrompt, images.length > 0) : null;
+  const dutyIntent = serviceProfile.role === "ticket" ? ticketDecision === "worker" : isDutyReportIntent(originalPrompt, images);
   let prompt = originalPrompt;
   if (!prompt && images.length) {
     prompt = dutyIntent ? "按默认工单流程生成腾讯文档草稿" : "请查看并描述这张图片的内容";
   }
-  if (!dutyIntent && images.length && ocrText && /(识别|文字|写的|写了|报错|报错信息|上面说|内容|读一下|翻译)/.test(prompt)) {
+  if (serviceProfile.role !== "ticket" && !dutyIntent && images.length && ocrText && /(识别|文字|写的|写了|报错|报错信息|上面说|内容|读一下|翻译)/.test(prompt)) {
     await replyText(frame, "OCR 识别结果：\n" + ocrText.slice(0, 3000) + "\n\n（本地 OCR，路径和符号可能有误；需要精确解析请重新发图并加一句“用模型看”）").catch(() => {});
     log("ocr fast path", `${ocrText.length} chars`);
     return;
   }
-  if (!dutyIntent && images.length && ocrText) {
+  if (serviceProfile.role !== "ticket" && !dutyIntent && images.length && ocrText) {
     prompt = `【OCR 识别文字】\n${ocrText.slice(0, 4000)}\n\n【用户问题】\n${prompt}`;
   }
   if (!prompt) {
@@ -1174,7 +1182,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const operators = Array.isArray(state.__operators) ? state.__operators : [];
   const isOperator = cfg.allowUsers.length
     ? cfg.allowUsers.includes(userId)
-    : operators.length === 0 || operators.includes(userId);
+    : (serviceProfile.role === "ticket" ? operators.includes(userId) : operators.length === 0 || operators.includes(userId));
 
   if (prompt.startsWith("/pair")) {
     const code = (prompt.split(/\s+/)[1] || "").trim();
@@ -1198,6 +1206,11 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     return;
   }
 
+  if (serviceProfile.role === "ticket") {
+    const route = ticketDecision;
+    if (route === "roster") { await replyText(frame, "这是工单机器人，排班查询请@排班机器人。"); return; }
+    if (route === "help" || /^(?:\/help(?:\s|$)|帮助$)/i.test(prompt)) { await replyText(frame, TICKET_HELP); return; }
+  }
   if ((["绑定排班群", "解绑排班群", "排班推送状态", "查看排班"].includes(prompt) || /^排班身份(?:\s|$)/.test(prompt))
       && !cfg.allowUsers.includes(userId) && !operators.includes(userId)) {
     await replyText(frame, "请先完成操作者配对，再使用排班群指令。");
@@ -1278,7 +1291,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     );
     return;
   }
-  if (await handleDeleteRequest(frame, prompt, chatKey)) return;
+  if (serviceProfile.role !== "ticket" && await handleDeleteRequest(frame, prompt, chatKey)) return;
   const dutyAgentCommand = /^\/(done|fill|pending|cancel)(?:\s|$)/i.test(prompt);
   const useDutyAgent = cfg.dutyAgent.enabled && (dutyIntent || dutyAgentCommand);
   if (useDutyAgent) {
@@ -1551,7 +1564,7 @@ function startNotifyServer(onReady) {
     if (req.method === "GET" && req.url === "/health") {
       const connectionHealth = connection.healthWatch?.snapshot();
       res.writeHead(200, {"content-type":"application/json", "cache-control":"no-store"});
-      res.end(JSON.stringify({service:"codex-wecom-bridge", serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"), pid:process.pid, authenticated:connection.authenticated,
+      res.end(JSON.stringify({service:"codex-wecom-bridge", serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"), pid:process.pid, role:serviceProfile.role, authenticated:connection.authenticated,
         uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild),
         connectionStale:Boolean(connectionHealth && Date.now() - connectionHealth.lastReceivedAt > 300_000)}));
       return;
@@ -1591,8 +1604,8 @@ function startNotifyServer(onReady) {
     log(e.code === "EADDRINUSE" ? "已有机器人实例或端口被占用，本实例退出，不重复连接" : "机器人启动端口失败", e.code || "unknown");
     process.exit(1);
   });
-  server.listen({port: 8799, host: "127.0.0.1", exclusive: true}, () => {
-    log("notify endpoint:", "http://127.0.0.1:8799/notify");
+  server.listen({port: serviceProfile.healthPort, host: "127.0.0.1", exclusive: true}, () => {
+    log("notify endpoint:", `http://127.0.0.1:${serviceProfile.healthPort}/notify`);
     onReady();
   });
 }
@@ -1735,11 +1748,10 @@ if (!process.argv.includes("--ask") && !dutyDryRunMode) {
     ensurePairingCode();
     cleanupCaches();
     setInterval(cleanupCaches, 6 * 3600 * 1000);
-    setTimeout(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 10000);
-    setInterval(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 60 * 1000);
-    refreshSystemInfo();
-    setInterval(refreshSystemInfo, 30000);
-    if (cfg.dutyAgent.enabled) scheduleBroadcast = startScheduleBroadcast({
+    if (serviceProfile.role === "combined") setTimeout(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 10000);
+    if (serviceProfile.role === "combined") setInterval(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 60 * 1000);
+    if (serviceProfile.role === "combined") { refreshSystemInfo(); setInterval(refreshSystemInfo, 30000); }
+    if (cfg.dutyAgent.enabled && serviceProfile.role === "combined") scheduleBroadcast = startScheduleBroadcast({
       workerRoot: cfg.dutyAgent.repoPath, configPath: cfg.dutyAgent.configPath,
       state, save: saveState, send: sendChatMessage, reply: replyText,
       ready: () => connection.authenticated, log,

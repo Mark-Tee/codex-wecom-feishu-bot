@@ -7,13 +7,15 @@ const {spawn} = require("node:child_process");
 const {createSupervisor} = require("./lib/bot-supervisor.cjs");
 const {appendRotatingLog} = require("./lib/rotating-log.cjs");
 const ROOT = __dirname;
+const {readServiceProfile}=require("./lib/service-profile.cjs");
+const profile=readServiceProfile(ROOT);
 const LOG_DIR = path.join(ROOT,"logs");
 const serviceId = crypto.createHash("sha256").update(ROOT).digest("hex");
 function log(message) {
   try { appendRotatingLog(path.join(LOG_DIR,"watchdog.log"), `[${new Date().toISOString()}] ${message}\n`, {maxBytes:1024*1024,keep:5}); } catch {}
 }
 async function probe() {
-  const response = await fetch("http://127.0.0.1:8799/health", {signal:AbortSignal.timeout(5000)});
+  const response = await fetch(`http://127.0.0.1:${profile.healthPort}/health`, {signal:AbortSignal.timeout(5000)});
   if (!response.ok) throw new Error("health unavailable");
   const data = await response.json();
   if(data.service !== "codex-wecom-bridge" || !Number.isInteger(data.pid)) throw new Error("different service");
@@ -25,7 +27,7 @@ lock.on("error", (error) => {
   log(error.code === "EADDRINUSE" ? "已有守护或端口占用，本守护退出" : "守护启动失败");
   process.exit(error.code === "EADDRINUSE" ? 0 : 1);
 });
-lock.listen({port:8798,host:"127.0.0.1",exclusive:true}, async () => {
+lock.listen({port:profile.guardianPort,host:"127.0.0.1",exclusive:true}, async () => {
   // Recover a surviving child after guardian failure; match this exact checkout, never an unknown bot.
   let existing;
   try { existing = await probe(); } catch {}
@@ -46,7 +48,7 @@ lock.listen({port:8798,host:"127.0.0.1",exclusive:true}, async () => {
     }
   }
   supervisor = createSupervisor({probe, log, spawnBridge:() => {
-    const child = spawn(process.execPath,[path.join(ROOT,"bridge.cjs")],{cwd:ROOT,stdio:["ignore","pipe","pipe"],windowsHide:true,env:process.env});
+    const child = spawn(process.execPath,[path.join(ROOT,profile.entry)],{cwd:ROOT,stdio:["ignore","pipe","pipe"],windowsHide:true,env:process.env});
     for(const [stream,name] of [[child.stdout,"bridge-stdout.log"],[child.stderr,"bridge-stderr.log"]]) {
       stream.on("data", (data) => {try {appendRotatingLog(path.join(LOG_DIR,name),data);} catch {}});
     }

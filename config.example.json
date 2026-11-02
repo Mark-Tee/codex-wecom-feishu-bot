@@ -25,5 +25,15 @@
       "草稿",
       "值班"
     ]
+  },
+  "service": {
+    "role": "combined",
+    "healthPort": 8799,
+    "guardianPort": 8798,
+    "taskName": "CodexWeComBridge"
+  },
+  "roster": {
+    "rulesRoot": "./worker",
+    "businessConfigPath": "./worker/duty-config.json"
   }
 }

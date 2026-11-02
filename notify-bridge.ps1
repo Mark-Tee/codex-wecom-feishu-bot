@@ -8,7 +8,10 @@ param(
 $ErrorActionPreference = "Continue"
 $root = Split-Path -Parent $PSCommandPath
 $logFile = Join-Path $root "logs\notify-bridge.log"
-$endpoint = "http://127.0.0.1:8799/notify"
+$config = Get-Content -LiteralPath (Join-Path $root "config.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($config.service.role -eq "roster") { exit 0 }
+$port = if ($config.service.healthPort) { [int]$config.service.healthPort } else { 8799 }
+$endpoint = "http://127.0.0.1:$port/notify"
 
 # 存在 disabled.flag 时跳过桌面端通知（手机端任务回帖不经过这里）。
 if ((-not $Test) -and (Test-Path -LiteralPath (Join-Path $root "disabled.flag"))) {

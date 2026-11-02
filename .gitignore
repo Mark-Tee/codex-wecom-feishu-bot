@@ -21,3 +21,7 @@ node_modules/
 worker/node_modules/
 *.log
 .venv/
+
+roster-state.json
+.local-backups/
+service-profile.local.json
