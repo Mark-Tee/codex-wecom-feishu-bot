@@ -5,6 +5,7 @@ const net = require("node:net");
 const crypto = require("node:crypto");
 const {spawn} = require("node:child_process");
 const {createSupervisor} = require("./lib/bot-supervisor.cjs");
+const {probeLocalHealth} = require("./lib/local-health-probe.cjs");
 const {appendRotatingLog} = require("./lib/rotating-log.cjs");
 const ROOT = __dirname;
 const {readServiceProfile}=require("./lib/service-profile.cjs");
@@ -15,12 +16,9 @@ function log(message) {
   try { appendRotatingLog(path.join(LOG_DIR,"watchdog.log"), `[${new Date().toISOString()}] ${message}\n`, {maxBytes:1024*1024,keep:5}); } catch {}
 }
 async function probe() {
-  const response = await fetch(`http://127.0.0.1:${profile.healthPort}/health`, {signal:AbortSignal.timeout(5000)});
-  if (!response.ok) throw new Error("health unavailable");
-  const data = await response.json();
-  if(data.service !== "codex-wecom-bridge" || !Number.isInteger(data.pid)) throw new Error("different service");
-  return data;
+  return probeLocalHealth({port:profile.healthPort});
 }
+
 const lock = net.createServer((socket) => socket.end());
 let supervisor, timer;
 lock.on("error", (error) => {
