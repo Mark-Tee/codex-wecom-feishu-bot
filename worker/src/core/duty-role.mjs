@@ -12,7 +12,6 @@ function cellFill(styles, col) {
 export function classifyRole({ row, styles, headers, config, nextStyles = [] }) {
   const operator = config.operator_name;
   const assignment = resolveSiteAssignment({ row, headers, config, operator });
-  if (assignment?.offsite) return { role: "offsite_training", assignment, reason: "当日安排在异地，不按本地站点打卡推定工作地点" };
   const operatorIndex = headers.indexOf(operator);
   const auxiliaryHeader = assignment?.auxiliaryHeader || config.line?.aux_column_header || "";
   const auxIndex = headers.indexOf(auxiliaryHeader);
@@ -33,6 +32,15 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
   const ordinaryWhiteFill = colorMatches(fill, "00000000") || colorMatches(fill, "FFFFFFFF");
   const auxiliaryMatch = String(row[auxIndex] || "").trim() === operator;
 
+  const explicitLeave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(value);
+  if (explicitLeave) {
+    if (assignment?.offsite || auxiliaryMatch) {
+      return { role: "ambiguous", requiresClarification: true, reason: "明确休假与岗位安排冲突，请核对排班" };
+    }
+    return { role: "rest", restKind: value === "调休" ? "compensatory" : "explicit-leave" };
+  }
+  if (assignment?.offsite) return { role: "offsite_training", assignment, reason: "当日安排在异地，不按本地站点打卡推定工作地点" };
+
   if (auxiliaryMatch && holiday) {
     return { role: "ambiguous", reason: `法定节假日${auxiliaryHeader}列不应有人` };
   }
@@ -46,6 +54,19 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
     return { role: "white_primary", overtime: holiday };
   }
   if (whiteValue && ordinaryWhiteFill && !holiday) {
+    if (config.site_rules?.enabled) {
+      const powerHeaders = ["动力白班值班人员", "动力夜班值班人员"];
+      if (powerHeaders.some((header) => !headers.includes(header))) {
+        return { role: "ambiguous", requiresClarification: true, reason: "缺少动力值班列，无法确认是否为待命" };
+      }
+      const powerAssigned = powerHeaders.some((header) => String(row[headers.indexOf(header)] || "")
+        .split(/[、,，;；/\s]+/u).includes(operator));
+      if (!powerAssigned) return {
+        role: "home_standby", overtime: false,
+        assignment: { ...assignment, site: config.site_rules.home_site, assignmentType: "待命" },
+        reason: "明确在岗白班且没有动力、主值、辅值或异地岗位，仅处理实际工单",
+      };
+    }
     return { role: "other_working", overtime: false };
   }
   if (whiteValue) {

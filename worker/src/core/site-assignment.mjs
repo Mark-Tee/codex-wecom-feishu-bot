@@ -33,7 +33,8 @@ export function resolveSiteAssignment({ row, headers, config, operator = config.
 export function applySiteRecordRules(spec, { context, fillCard, config }) {
   const entry = context.schedule?.find((item) => item.date === context.shiftDate);
   const assignment = entry?.role?.assignment;
-  if (!assignment?.offsite) return { spec, assignment: null, skipHomeDraft: false };
+  const standby = entry?.role?.role === "home_standby";
+  if (!assignment?.offsite && !standby) return { spec, assignment: null, skipHomeDraft: false };
   const homeAliases = config.site_rules?.home_site_aliases || [config.site_rules?.home_site];
   const isHome = (value) => homeAliases.filter(Boolean).some((alias) => String(value || "").trim() === alias);
   // Only fields extracted from the actual ticket are accepted, never a location inferred
@@ -41,13 +42,16 @@ export function applySiteRecordRules(spec, { context, fillCard, config }) {
   const hasHomeTicket = isHome(fillCard?.location)
     && /^SJSW\d{14}$/.test(String(fillCard?.transactionNo || ""))
     && /^JF\d{14}$/.test(String(fillCard?.roomTicketNo || ""));
+  if (standby && (!hasHomeTicket || (spec.weeklyRows || []).length !== 1)) {
+    throw new Error("待命本身不生成记录，只登记地点和单号明确的一条实际工单，请核对工单信息");
+  }
   if (!hasHomeTicket) {
     return { spec: { ...spec, weeklyRows: [], handoverRows: [] }, assignment, skipHomeDraft: true };
   }
   const rows = spec.weeklyRows || [];
   if (rows.length > 1 || rows.some((row) => !isHome(row[1])
     || (/^(?:\d+[、.\s]*)?(?:日常机房巡检|机房巡检|网络通报|系统通报|\d+月\d+日(?:白班|夜班)值班)$/.test(String(row[3]).trim()) && !String(fillCard.specificWork || "").includes(String(row[3]).trim())))) {
-    throw new Error("异地安排当天只登记明确的本地站点实际工单，不能附加本地站点巡检、通报或值班记录，请核对工单草稿");
+    throw new Error("待命或异地安排时只登记明确的本地站点实际工单，不能附加巡检、通报或值班记录，请核对工单草稿");
   }
   return { spec: { ...spec, handoverRows: [] }, assignment, skipHomeDraft: rows.length === 0 };
 }

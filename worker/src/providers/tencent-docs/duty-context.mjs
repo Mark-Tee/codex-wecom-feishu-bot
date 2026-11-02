@@ -140,7 +140,10 @@ export async function buildDutyContext({
       date: entry.date,
       role,
       successor,
-      warnings: holiday && auxValue ? [`法定节假日网络辅值应为空，当前为：${auxValue}`] : [],
+      warnings: [
+        ...(holiday && auxValue ? [`法定节假日网络辅值应为空，当前为：${auxValue}`] : []),
+        ...(entry.date === dateKey(shift.shiftDate) && role.requiresClarification ? [role.reason] : []),
+      ],
       cells: headers.map((header, index) => ({
         header,
         value: entry.row[index] || "",
