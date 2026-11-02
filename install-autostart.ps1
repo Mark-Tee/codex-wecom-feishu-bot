@@ -1,30 +1,19 @@
-﻿# 注册计划任务：登录时自动启动，并立即启动一次。
+﻿# User logon task; no passwords or system-account browser profiles.
 $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
-$taskName = "CodexWeComBridge"
 $launcher = Join-Path $root "start-hidden.ps1"
-$action = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
-
-$created = $false
+$taskName = "CodexWeComBridge"
+$pwsh = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action = New-ScheduledTaskAction -Execute $pwsh -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $launcher + '" -Wait') -WorkingDirectory $root
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
+$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
+$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit ([TimeSpan]::Zero) -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
 try {
-    schtasks /Create /TN $taskName /TR $action /SC ONLOGON /RL LIMITED /F 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        schtasks /Run /TN $taskName 2>&1 | Out-Null
-        $created = $true
-    }
-} catch { }
-
-if (-not $created) {
-    Write-Host "计划任务创建被拒绝，改用 WMI 直接启动（需要开机自启时用管理员再跑一次本脚本）" -ForegroundColor Yellow
-    powershell -NoProfile -ExecutionPolicy Bypass -File $launcher
-}
-
-Start-Sleep -Seconds 5
-$proc = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
-    Where-Object { $_.CommandLine -match 'bridge\.cjs' }
-
-if ($proc) {
-    Write-Host "已注册并启动：$taskName（PID $($proc.ProcessId)）" -ForegroundColor Green
-} else {
-    Write-Host "任务已注册但没有启动成功，看 logs\stderr.log" -ForegroundColor Yellow
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    Write-Output "Installed user logon task; scheduler retries guardian failures every minute."
+} catch {
+    Write-Warning "Task registration unavailable; using the Windows user Startup shortcut. Guardian still restarts the bot."
+    & (Join-Path $root "install-startup.ps1")
 }

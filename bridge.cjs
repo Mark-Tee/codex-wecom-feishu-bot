@@ -7,6 +7,7 @@ let scheduleBroadcast = null;
  */
 
 const fs = require("fs");
+const { appendRotatingLog } = require("./lib/rotating-log.cjs");
 const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
@@ -54,12 +55,6 @@ try {
 const WS_URL = "wss://openws.work.weixin.qq.com";
 const MAX_REPLY_BYTES = 20000;
 
-function rotateLog(file, maxBytes = 5 * 1024 * 1024) {
-  try {
-    if (fs.statSync(file).size > maxBytes) fs.renameSync(file, `${file}.1`);
-  } catch {}
-}
-
 function localTimestamp() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -73,8 +68,7 @@ function log(...parts) {
   const line = `[${localTimestamp()}] ${parts.join(" ")}`;
   console.log(line);
   try {
-    rotateLog(LOG_FILE);
-    fs.appendFileSync(LOG_FILE, line + "\n");
+    appendRotatingLog(LOG_FILE, line + "\n");
   } catch {}
 }
 
@@ -1034,6 +1028,8 @@ function cleanupCaches() {
 // 全局约定：新增任何功能/命令，必须同时更新 HELP_ENTRIES 与 FULL_HELP（触发词、参数、示例、限制）。
 // 全局约定：新增任何功能/命令，必须同时更新 FEATURES 与 FULL_HELP（触发词、参数、示例、限制）。
 const FEATURES = [
+  {id:"stability", aliases:["守护", "自启动", "日志轮转", "稳定性"],
+   usage:"【本机稳定性守护】\n登录Windows后自动启动。运行 install-autostart.ps1 安装当前用户启动任务（权限不足时使用启动快捷方式）；start-hidden.ps1 启动守护，stop.ps1 停止并暂停计划任务，均无业务参数。\n示例：在项目目录执行 powershell -File .\\install-autostart.ps1。1个机器人加1个不联网的轻量守护；主进程退出后5秒起退避恢复，最多5分钟；本地健康检查每30秒，启动宽限2分钟，连续3次失败才回收。已有30秒心跳，90秒无响应关闭连接并重连。日志5MiB一卷保留5卷归档，守护日志1MiB；不调用模型、不用机场做健康探测。保留双端口单实例保护，手动独立进程需先停止再交给守护。"},
   {
     id: "schedule-broadcast", aliases: ["排班", "排班群", "白班辅值"],
     usage: "【每日排班】\n群内已授权操作者@机器人：绑定排班群 / 解绑排班群 / 排班推送状态 / 查看排班，均无参数。\n示例：@机器人 绑定排班群。每日北京时间07:00实时读表发当天、17:00实时读表发次日；绑定时已过的时段不补发。重启仅补当前时段，发送结果不明不自动重复。仅绑定一个群，不使用单聊；发送后不追踪变更，查看排班可重新读表。周末（含补班）及节假日无白班辅值，夜班也无辅值。数据核验失败不发旧缓存。",
@@ -1091,6 +1087,7 @@ const FEATURES = [
 ];
 
 const FULL_HELP = [
+  "稳定性守护 —— 登录自启、异常恢复、连接检测、日志轮转；详询守护帮助。后台检查不调用模型",
   "绑定排班群 / 解绑排班群 —— 群内@，无参数，仅授权操作者，每天07:00发当天、17:00发次日",
   "查看排班 / 排班推送状态 —— 群内@，无参数，实时查询或查看状态；发送后不追踪调班，读表失败不发旧数据",
   "白班辅值 —— 仅周一至周五非节假日白班，周末补班亦无辅值",
@@ -1549,6 +1546,14 @@ function handleFrame(frame) {
 
 function startNotifyServer(onReady) {
   const server = http.createServer((req, res) => {
+    if (req.method === "GET" && req.url === "/health") {
+      const connectionHealth = connection.healthWatch?.snapshot();
+      res.writeHead(200, {"content-type":"application/json", "cache-control":"no-store"});
+      res.end(JSON.stringify({service:"codex-wecom-bridge", serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"), pid:process.pid, authenticated:connection.authenticated,
+        uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild),
+        connectionStale:Boolean(connectionHealth && Date.now() - connectionHealth.lastReceivedAt > 300_000)}));
+      return;
+    }
     if (req.method !== "POST" || req.url !== "/notify") {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: "not found" }));

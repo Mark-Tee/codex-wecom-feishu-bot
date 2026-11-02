@@ -1,82 +1,60 @@
 #!/usr/bin/env node
-/**
- * 桥接守护进程：以子进程方式运行 bridge.cjs，退出后自动重启。
- * 用 WMI 或启动文件夹拉起本文件即可，bridge 自身不需要再单独启动。
- */
-
-const { spawn } = require("child_process");
-const fs = require("fs");
-const path = require("path");
-
+const fs = require("node:fs");
+const path = require("node:path");
+const net = require("node:net");
+const crypto = require("node:crypto");
+const {spawn} = require("node:child_process");
+const {createSupervisor} = require("./lib/bot-supervisor.cjs");
+const {appendRotatingLog} = require("./lib/rotating-log.cjs");
 const ROOT = __dirname;
-const LOG_DIR = path.join(ROOT, "logs");
-fs.mkdirSync(LOG_DIR, { recursive: true });
-const LOG_FILE = path.join(LOG_DIR, "watchdog.log");
-const PID_FILE = path.join(ROOT, "watchdog.pid");
-
+const LOG_DIR = path.join(ROOT,"logs");
+const serviceId = crypto.createHash("sha256").update(ROOT).digest("hex");
 function log(message) {
-  const line = `[${new Date().toISOString()}] ${message}`;
-  try {
-    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 2 * 1024 * 1024) {
-      fs.renameSync(LOG_FILE, `${LOG_FILE}.1`);
+  try { appendRotatingLog(path.join(LOG_DIR,"watchdog.log"), `[${new Date().toISOString()}] ${message}\n`, {maxBytes:1024*1024,keep:5}); } catch {}
+}
+async function probe() {
+  const response = await fetch("http://127.0.0.1:8799/health", {signal:AbortSignal.timeout(5000)});
+  if (!response.ok) throw new Error("health unavailable");
+  const data = await response.json();
+  if(data.service !== "codex-wecom-bridge" || !Number.isInteger(data.pid)) throw new Error("different service");
+  return data;
+}
+const lock = net.createServer((socket) => socket.end());
+let supervisor, timer;
+lock.on("error", (error) => {
+  log(error.code === "EADDRINUSE" ? "已有守护或端口占用，本守护退出" : "守护启动失败");
+  process.exit(error.code === "EADDRINUSE" ? 0 : 1);
+});
+lock.listen({port:8798,host:"127.0.0.1",exclusive:true}, async () => {
+  // Recover a surviving child after guardian failure; match this exact checkout, never an unknown bot.
+  let existing;
+  try { existing = await probe(); } catch {}
+  if (existing) {
+    if (existing.serviceId !== serviceId) {log("端口属于其他项目，不接管、不结束该进程"); lock.close(); return;}
+    while (existing?.busy) {
+      log("等待本项目现有工单结束后接管遗留进程");
+      await new Promise((resolve) => setTimeout(resolve,30_000));
+      try { existing = await probe(); } catch {existing = null;}
+      if(existing && existing.serviceId !== serviceId) {lock.close(); return;}
     }
-    fs.appendFileSync(LOG_FILE, line + "\n");
-  } catch {}
-}
-
-function alive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    if(existing) {
+      const confirmed = await probe();
+      if(confirmed.pid !== existing.pid || confirmed.serviceId !== serviceId || confirmed.busy) {lock.close(); return;}
+      log("接管本项目遗留主进程，回收后由单一守护恢复");
+      try {process.kill(confirmed.pid);} catch (error) {if(error.code !== "ESRCH") throw error;}
+      await new Promise((resolve) => setTimeout(resolve,1000));
+    }
   }
-}
-
-// 单实例：已有守护在跑就直接退出
-if (fs.existsSync(PID_FILE)) {
-  const old = Number(fs.readFileSync(PID_FILE, "utf8").trim());
-  if (old && old !== process.pid && alive(old)) {
-    console.log("watchdog already running:", old);
-    process.exit(0);
-  }
-}
-fs.writeFileSync(PID_FILE, String(process.pid), "utf8");
-log(`watchdog started pid=${process.pid}`);
-
-let child = null;
-let stopped = false;
-
-function startBridge() {
-  if (stopped) return;
-  log("starting bridge");
-  child = spawn(process.execPath, [path.join(ROOT, "bridge.cjs")], {
-    cwd: ROOT,
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-    env: process.env,
-  });
-  child.stdout.on("data", (d) => process.stdout.write(d));
-  child.stderr.on("data", (d) => process.stderr.write(d));
-  child.on("exit", (code, signal) => {
-    log(`bridge exited code=${code} signal=${signal || ""}; restarting in 5s`);
-    child = null;
-    setTimeout(startBridge, 5000);
-  });
-}
-
-function shutdown() {
-  stopped = true;
-  log("watchdog stopping");
-  try {
-    child && child.kill();
-  } catch {}
-  try {
-    fs.rmSync(PID_FILE, { force: true });
-  } catch {}
-  process.exit(0);
-}
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-startBridge();
+  supervisor = createSupervisor({probe, log, spawnBridge:() => {
+    const child = spawn(process.execPath,[path.join(ROOT,"bridge.cjs")],{cwd:ROOT,stdio:["ignore","pipe","pipe"],windowsHide:true,env:process.env});
+    for(const [stream,name] of [[child.stdout,"bridge-stdout.log"],[child.stderr,"bridge-stderr.log"]]) {
+      stream.on("data", (data) => {try {appendRotatingLog(path.join(LOG_DIR,name),data);} catch {}});
+    }
+    return child;
+  }});
+  supervisor.launch();
+  timer = setInterval(() => supervisor.check().catch(() => log("健康检查失败，下次继续")),30_000);
+  log(`守护已启动 pid=${process.pid}；仅检查本机，不调用模型`);
+});
+function stop() { clearInterval(timer); supervisor?.stop(); lock.close(); process.exit(0); }
+process.on("SIGINT",stop);process.on("SIGTERM",stop);

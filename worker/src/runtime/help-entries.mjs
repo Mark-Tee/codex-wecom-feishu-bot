@@ -1,4 +1,5 @@
 export const HELP_ENTRIES = Object.freeze([
+  {trigger:"本机守护与登录启动",parameters:"无业务参数",description:"桥接项目install-autostart.ps1登记用户登录启动，start-hidden.ps1启动守护，stop.ps1停止并暂停计划任务。异常退出退避重启，本机健康每30秒检测，90秒连接无响应重连，日志轮转。",example:"项目目录 powershell -File .\\install-autostart.ps1",limits:"一个机器人加轻量本地守护，保留单实例。健康检查不调用模型、不访问代理；登录前不运行。重启系统后的登录启动尚需实际观察。"},
   {trigger: "绑定排班群 / 解绑排班群 / 排班推送状态 / 查看排班", parameters: "无",
    description: "由桥接服务在已授权操作者所在群处理。每天北京时间07:00发送当天排班、17:00发送次日排班，发送前实时读表。",
    example: "在目标群@机器人 绑定排班群；@机器人 查看排班可即时重新读取。",
