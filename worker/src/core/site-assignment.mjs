@@ -1,4 +1,4 @@
-const names = (value) => String(value || "").split(/[、,，;；/\s]+/u).filter(Boolean);
+import { rosterNames as names } from "./roster-names.mjs";
 
 export function resolveSiteAssignment({ row, headers, config, operator = config.operator_name }) {
   const rules = config.site_rules;

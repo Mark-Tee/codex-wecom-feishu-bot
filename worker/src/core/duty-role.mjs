@@ -1,3 +1,4 @@
+import { rosterNames } from "./roster-names.mjs";
 import { resolveSiteAssignment } from "./site-assignment.mjs";
 export function colorMatches(value, expected) {
   const actual = String(value || "").toUpperCase();
@@ -30,7 +31,8 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
   const whitePrimaryFill = colorMatches(fill, config.schedule.primary_white_fill);
   const nightPrimaryFill = colorMatches(fill, config.schedule.primary_night_fill);
   const ordinaryWhiteFill = colorMatches(fill, "00000000") || colorMatches(fill, "FFFFFFFF");
-  const auxiliaryMatch = String(row[auxIndex] || "").trim() === operator;
+  const auxiliaryNames = rosterNames(row[auxIndex]);
+  const auxiliaryMatch = auxiliaryNames.length === 1 && auxiliaryNames[0] === operator;
 
   const explicitLeave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(value);
   if (explicitLeave) {
@@ -59,8 +61,7 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
       if (powerHeaders.some((header) => !headers.includes(header))) {
         return { role: "ambiguous", requiresClarification: true, reason: "缺少动力值班列，无法确认是否为待命" };
       }
-      const powerAssigned = powerHeaders.some((header) => String(row[headers.indexOf(header)] || "")
-        .split(/[、,，;；/\s]+/u).includes(operator));
+      const powerAssigned = powerHeaders.some((header) => rosterNames(row[headers.indexOf(header)]).includes(operator));
       if (!powerAssigned) return {
         role: "home_standby", overtime: false,
         assignment: { ...assignment, site: config.site_rules.home_site, assignmentType: "待命" },

@@ -1,3 +1,4 @@
+import { rosterNames } from "../../core/roster-names.mjs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveTaskShift } from "../../core/task-workflow.mjs";
@@ -13,7 +14,7 @@ export function powerDutyFromRows(rows, { receivedAt, operator }) {
   if (dateIndex < 0 || nameIndex < 0) throw new Error("在线排班表缺少日期或动力值班人员列，不能自动判断");
   const matches = rows.slice(1).filter((row) => String(row[dateIndex] || "").trim() === shift.date);
   if (matches.length !== 1) throw new Error(`动力值班排班 ${shift.date} 缺失或重复，请核对在线表`);
-  const names = String(matches[0][nameIndex] || "").split(/[、,，;；/\s]+/u).filter(Boolean);
+  const names = rosterNames(matches[0][nameIndex]);
   if (!names.length) throw new Error(`动力${shift.kind} ${shift.date} 人员为空，请核对在线表`);
   if (!String(operator || "").trim()) throw new Error("未确定当前使用人，不能判断动力值班");
   return { matched: names.includes(String(operator).trim()), date: shift.date, kind: shift.kind };
