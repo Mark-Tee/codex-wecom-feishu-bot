@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const {remoteDenial}=require("./lib/remote-policy.cjs");
+const {remoteDenial,remoteUserAuthorized}=require("./lib/remote-policy.cjs");
 const {ROSTER_HELP}=require("./lib/roster-service.cjs");
 const { startScheduleBroadcast } = require("./lib/schedule-broadcast.cjs");
 const {normalizeRosterCommand,isMenuPrompt} = require("./lib/roster-command.cjs");
@@ -1178,17 +1178,8 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     return;
   }
   const chatKey = body.chatid || (body.from && body.from.userid) || "unknown";
-  state.__lastChat__ = {
-    chatid: body.chatid || userId || chatKey,
-    chatType: body.chattype === "group" ? 2 : 1,
-    userid: userId,
-    at: new Date().toISOString(),
-  };
-  saveState(state);
   const operators = Array.isArray(state.__operators) ? state.__operators : [];
-  const isOperator = cfg.allowUsers.length
-    ? cfg.allowUsers.includes(userId)
-    : (serviceProfile.role === "ticket" ? operators.includes(userId) : operators.length === 0 || operators.includes(userId));
+  const isOperator = remoteUserAuthorized(userId, cfg.allowUsers, operators);
 
   if (prompt.startsWith("/pair")) {
     const code = (prompt.split(/\s+/)[1] || "").trim();
@@ -1207,10 +1198,18 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
 
   if (!isOperator) {
-    await replyText(frame, "你还没有配对。请在电脑上查看 pairing-code.txt，然后发送 /pair <配对码>。").catch(() => {});
+    await replyText(frame, "无权限：请联系维护者在本机配置授权用户。").catch(() => {});
     log("unauthorized user", userId);
     return;
   }
+
+  state.__lastChat__ = {
+    chatid: body.chatid || userId || chatKey,
+    chatType: body.chattype === "group" ? 2 : 1,
+    userid: userId,
+    at: new Date().toISOString(),
+  };
+  saveState(state);
 
   if (serviceProfile.role === "ticket") {
     const route = ticketDecision;
@@ -1593,6 +1592,9 @@ function startNotifyServer(onReady) {
         const last = state.__lastChat__;
         if (!connection.authenticated) throw new Error("bridge 还没连上企业微信");
         if (!last || !last.chatid) throw new Error("还没有会话，先在群里 @ 机器人说一句话");
+        if (!remoteUserAuthorized(last.userid, cfg.allowUsers, state.__operators || [])) {
+          throw new Error("通知目标未授权，请先由授权用户重新发送消息");
+        }
         await send("aibot_send_msg", {
           chatid: last.chatid,
           chat_type: last.chatType || 0,

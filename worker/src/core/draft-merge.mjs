@@ -87,15 +87,13 @@ export function mergeDraftRows({
   const weeklyRows = weeklyExisting.slice(1)
     .map((row) => normalizeRow(row, 17))
     .filter((row) => retainAll || keepDates.has(parseCompactDate(row[5], year)));
-  const weeklyKeys = new Set(weeklyRows.map((row) => `${parseCompactDate(row[5], year)}|${String(row[3]).trim()}`));
   const usedSequences = new Set(
     weeklyRows.map((row) => Number(String(row[0]).trim())).filter(Number.isFinite),
   );
   let maxSequence = Math.max(0, ...usedSequences);
   for (const incoming of weeklyIncoming.map((row) => normalizeRow(row, 17))) {
     const date = parseCompactDate(incoming[5], year);
-    const key = `${date}|${String(incoming[3]).trim()}`;
-    if (!keepDates.has(date) || weeklyKeys.has(key)) continue;
+    if (!keepDates.has(date)) continue;
     const sequence = Number(String(incoming[0]).trim());
     if (!Number.isFinite(sequence) || usedSequences.has(sequence)) {
       maxSequence += 1;
@@ -103,7 +101,6 @@ export function mergeDraftRows({
     } else maxSequence = Math.max(maxSequence, sequence);
     usedSequences.add(Number(incoming[0]));
     weeklyRows.push(incoming);
-    weeklyKeys.add(key);
   }
 
   const handoverRows = handoverExisting.slice(1)
