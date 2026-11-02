@@ -6,7 +6,7 @@ import { parseBitableTarget } from "./task-list-reader.mjs";
 export function assertSameWriteTarget(actualUrl, expectedUrl) {
   const actual=parseBitableTarget(actualUrl), expected=parseBitableTarget(expectedUrl);
   if(actual.origin!==expected.origin || actual.appToken!==expected.appToken || actual.tableId!==expected.tableId)
-    throw new Error("飞书写入已拦截：当前页面不是获准的目标表");
+    {const error=new Error("飞书写入已拦截：当前页面不是获准的目标表");error.requiresLocalReview=true;throw error;}
 }
 export function writeTaskFingerprint(task) {
   function stable(value) {
@@ -41,7 +41,7 @@ export function claimWriteApproval(config, task, now=Date.now()) {
   } catch {
     throw new Error("飞书写入已拦截：许可已使用或无法锁定；请先只读核对结果，禁止重复建单");
   }
-  return {mark(stage){fs.appendFileSync(used,JSON.stringify({stage,at:new Date().toISOString()})+"\n");}};
+  return {allowExistingOrder:approval.allowExistingOrder===true,mark(stage){fs.appendFileSync(used,JSON.stringify({stage,at:new Date().toISOString()})+"\n");}};
 }
 export function assertEmptyNewRecord(values) {
   if(!Array.isArray(values) || values.some(value=>String(value||"").replace(/[\u200B-\u200D\u2060\uFEFF]/gu,"").trim()))

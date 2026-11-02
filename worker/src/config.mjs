@@ -46,6 +46,8 @@ export function loadConfig(configPath = path.resolve("config.json")) {
     autoFill: browser.autoFill !== false,
     autoSubmit: Boolean(browser.autoSubmit),
     writeApprovalFile: String(browser.writeApprovalFile || "").trim(),
+    orderDeduplication: browser.orderDeduplication !== false,
+    orderLedgerDir: path.resolve(path.dirname(absolutePath), browser.orderLedgerDir || path.join(config.dataDir,"feishu-order-guards")),
     entryMode: browser.entryMode === "form" ? "form" : "record",
     edgeExecutable: browser.edgeExecutable
       || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",

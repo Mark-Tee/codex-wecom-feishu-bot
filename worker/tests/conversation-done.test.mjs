@@ -385,3 +385,15 @@ test("共享表测试的填写回执不再引导写腾讯草稿",async()=>{
  service.config.feishuBrowser.writeApprovalFile="local-permit";pendingTasks.create({chatId:"chat-a",operator:"测试甲",draftSpec:validSpec(),currentDate:"20261026"});
  const c=responseCollector();await service.handle(message("/fill 1"),c.responder);await waitForReply(c.replies,"本次只测试飞书");assert.doesNotMatch(c.replies.at(-1).text,/提交飞书后发送/);
 });
+
+test("completed fill and cross-chat short ID make zero browser and model calls",async()=>{
+ let fills=0,models=0;const {service,pendingTasks}=createService({runner:{run:async()=>{models++;throw Error('must not model');},stop(){}},browserFiller:{enabled:true,fill:async()=>{fills++;throw Error('must not fill');}}});
+ const pending=pendingTasks.create({chatId:'chat-a',operator:'测试甲',draftSpec:validSpec()});pendingTasks.complete(pending.id,'chat-a',{submitted:true});
+ for(const chat of ['chat-a','chat-b']){const c=responseCollector();await service.handle(message('/fill '+pending.id,chat),c.responder);await waitForReply(c.replies,chat==='chat-a'?'不能填表':'没有找到');}
+ assert.equal(fills,0);assert.equal(models,0);
+});
+test("unauthorized sender cannot queue business work, query pending or change user",async()=>{
+ const {service,state}=createService();service.access={isAuthorized:()=>false};const before=structuredClone(state.data);
+ for(const text of ['/pending','/as 测试乙','/fill 1']){const c=responseCollector();await service.handle(message(text),c.responder);assert.match(c.replies.at(-1).text,/无权限/);}
+ assert.equal(service.queue.size,0);assert.deepEqual(state.data,before);
+});

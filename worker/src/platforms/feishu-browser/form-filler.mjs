@@ -1,3 +1,4 @@
+import {readOrderSnapshot,assertNoExistingOrder,reserveOrderAttempt,explicitDuplicateTest} from "./order-guard.mjs";
 import {claimWriteApproval,assertSameWriteTarget,assertEmptyNewRecord} from "./write-approval.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -73,9 +74,10 @@ export function diagnosticCodeForStage(stage) {
 }
 
 export class FeishuBrowserFormFiller {
-  constructor({ config = {}, logger } = {}) {
+  constructor({ config = {}, logger, sessionFactory = value => EdgeFormSession.open(value) } = {}) {
     this.config = config;
     this.logger = logger;
+    this.sessionFactory = sessionFactory;
   }
 
   get enabled() {
@@ -478,6 +480,8 @@ export class FeishuBrowserFormFiller {
     }
     let session;
     let writeApproval;
+    let orderJournal,initialOrderSnapshot;
+    const dedup=this.config.entryMode==="record" && this.config.orderDeduplication!==false;
     const filled = [];
     const skipped = [];
     const failed = [];
@@ -517,12 +521,20 @@ export class FeishuBrowserFormFiller {
     try {
       stage = "open-browser";
       writeApproval=claimWriteApproval(this.config,task);
-      session = await EdgeFormSession.open(this.config);
-      if(writeApproval)assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
+      const allowDuplicate=explicitDuplicateTest(writeApproval,task);
+      if(dedup)orderJournal=reserveOrderAttempt(this.config,task,allowDuplicate);
+      session = await this.sessionFactory(this.config);
+      if(writeApproval||this.config.entryMode==="record")assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
+      if(dedup){
+        initialOrderSnapshot=await readOrderSnapshot(session,this.config,task.fillCard,resolveTaskShiftForWorkOrder({expectedEnterAt:task.fillCard.expectedEnterAt,receivedAt:task.receivedAt}).prefix);
+        if(initialOrderSnapshot.matches.length&&!allowDuplicate)orderJournal.mark("duplicate-existing");
+        assertNoExistingOrder(initialOrderSnapshot,allowDuplicate);
+      }
       stage = (this.config.entryMode || "record") === "record"
         ? "open-record"
         : "wait-form";
       if (this.config.entryMode === "record") {
+        orderJournal?.mark("create-started");
         await this.#openRecordModal(session);
       } else {
         await this.#waitForForm(session);
@@ -538,11 +550,11 @@ export class FeishuBrowserFormFiller {
       });
       stage = "read-task-numbers";
       let taskNumber = nextTaskNumber(
-        await this.#readTaskNumbers(session, shift.prefix),
+        initialOrderSnapshot ? initialOrderSnapshot.numbers : await this.#readTaskNumbers(session, shift.prefix),
         shift.prefix,
       );
 
-      if(writeApproval) {
+      if(writeApproval||dedup) {
         assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
         const selectors=[ids.taskList,ids.transactionNo,ids.roomTicketNo,ids.specificWork].filter(Boolean).map(id=>this.#selector(id));
         const values=await session.evaluate(`(() => ${JSON.stringify(selectors)}.map(selector => {
@@ -552,7 +564,7 @@ export class FeishuBrowserFormFiller {
           if(!controls.length)throw Error("无法核验新记录字段为空");
           return controls.map(el=>el.value ?? el.innerText ?? "").join("");
         }))()`);
-        assertEmptyNewRecord(values);writeApproval.mark("new-form-verified");
+        assertEmptyNewRecord(values);writeApproval?.mark("new-form-verified");
       }
       const workContent = chooseWorkContent(card, options.workContent || []);
       const source = matchOption(
@@ -593,7 +605,7 @@ export class FeishuBrowserFormFiller {
         stage = `fill:${label}`;
         const actionStartedAt = Date.now();
         try {
-          if(writeApproval)assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
+          if(writeApproval||this.config.entryMode==="record")assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
           if (await action()) filled.push(label);
           else skipped.push(`${label}（原值或人工填写）`);
         } catch (error) {
@@ -605,8 +617,10 @@ export class FeishuBrowserFormFiller {
       }
 
       stage = "refresh-task-number";
+      const finalOrderSnapshot=dedup?await readOrderSnapshot(session,this.config,card,shift.prefix):null;
+      if(finalOrderSnapshot)assertNoExistingOrder(finalOrderSnapshot,allowDuplicate);
       const refreshedTaskNumber = nextTaskNumber(
-        await this.#readTaskNumbers(session, shift.prefix),
+        finalOrderSnapshot ? finalOrderSnapshot.numbers : await this.#readTaskNumbers(session, shift.prefix),
         shift.prefix,
       );
       if (refreshedTaskNumber !== taskNumber) {
@@ -635,7 +649,7 @@ export class FeishuBrowserFormFiller {
         date: expectedDate,
         time: expectedTime,
       });
-      if (!verification.ok || (writeApproval && failed.length)) {
+      if (!verification.ok || ((writeApproval||dedup) && failed.length)) {
         failed.push("字段核对");
         const diagnostics = await this.#captureFailureDiagnostics(
           session,
@@ -660,7 +674,7 @@ export class FeishuBrowserFormFiller {
           submitted: false,
           timings: { ...timings, total: Date.now() - startedAt },
           message: `字段核对不一致：${verification.mismatches.join("、")}`,
-          requiresLocalReview: Boolean(this.config.writeApprovalFile),
+          requiresLocalReview: Boolean(this.config.writeApprovalFile)||dedup,
           pageUrl: this.config.formUrl,
         };
       }
@@ -670,8 +684,11 @@ export class FeishuBrowserFormFiller {
         stage = "submit";
         const submitStartedAt = Date.now();
         try {
+          if(this.config.entryMode==="record")assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
           if(writeApproval){assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);writeApproval.mark("submit-started");}
+          if(dedup){assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);orderJournal.mark("submit-started");}
           submitted = await this.#submit(session);
+          if(submitted)orderJournal?.mark("submitted-awaiting-readback");
           writeApproval?.mark("submit-reported-success-needs-readback");
         } finally {
           timings["飞书提交"] = Date.now() - submitStartedAt;
@@ -723,11 +740,11 @@ export class FeishuBrowserFormFiller {
         timings: { ...timings, total: Date.now() - startedAt },
         diagnostics,
         message: error.message,
-        requiresLocalReview: Boolean(this.config.writeApprovalFile),
+        requiresLocalReview: Boolean(this.config.writeApprovalFile)||Boolean(error.requiresLocalReview)||Boolean(orderJournal),
         pageUrl: this.config.formUrl,
       };
     } finally {
-      session?.close();
+      try{orderJournal?.finish();}finally{session?.close();}
     }
   }
 }

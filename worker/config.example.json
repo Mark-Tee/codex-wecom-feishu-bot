@@ -49,6 +49,8 @@
     "autoFill": true,
     "autoSubmit": false,
     "writeApprovalFile": "",
+    "orderDeduplication": true,
+    "orderLedgerDir": "data/feishu-order-guards",
     "entryMode": "record",
     "edgeExecutable": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "profileDir": "data/feishu-browser-profile",
