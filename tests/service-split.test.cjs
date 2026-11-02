@@ -25,6 +25,8 @@ test("roster service refuses unauthorized senders and never dispatches unrelated
  const handle=createRosterService({state,save:()=>saves++,controller:{command:async(_,text)=>{if(text==="查看排班"){dispatched++;return true;}return false;}},reply:async(_,text)=>replies.push(text),health:()=>({authenticated:true}),makeCode:()=>"123456"});
  const frame=(id,userId,text,msgtype="text")=>({cmd:"aibot_msg_callback",body:{msgid:id,msgtype,chattype:"group",chatid:"test-group",from:{userid:userId},text:{content:text}}});
  await handle(frame("a","stranger","查看排班"));assert.equal(dispatched,0);assert.match(replies.at(-1),/先发送/);
+ await handle(frame("menu","stranger","@Assistant BOT"));assert.match(replies.at(-1),/【排班机器人】/);assert.equal(dispatched,0);
+ await handle(frame("menu-empty","owner","@排班机器人"));assert.match(replies.at(-1),/只@我不附文字/);assert.equal(dispatched,0);
  await handle(frame("b","owner","@Assistant BOT 查看排班"));assert.equal(dispatched,1);await handle(frame("b","owner","查看排班"));assert.equal(dispatched,1);
  await handle(frame("c","owner","创建飞书工单"));assert.match(replies.at(-1),/不处理工单/);
  await handle(frame("d","owner","","image"));assert.match(replies.at(-1),/不识别工单图片/);assert.equal(dispatched,1);

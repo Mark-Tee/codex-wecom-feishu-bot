@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const { startScheduleBroadcast } = require("./lib/schedule-broadcast.cjs");
-const {normalizeRosterCommand} = require("./lib/roster-command.cjs");
+const {normalizeRosterCommand,isMenuPrompt} = require("./lib/roster-command.cjs");
 let scheduleBroadcast = null;
 /**
  * 企业微信智能机器人（长连接）<-> 本机 Codex 桥接服务。
@@ -1093,6 +1093,7 @@ const FEATURES = [
 ];
 
 const FULL_HELP = [
+  "只@机器人不附文字 / /help —— 显示当前机器人的使用菜单，本地回复，不调用模型",
   "机器人分工 —— 排班与工单可分别独立部署，凭证、端口、状态和启动任务隔离",
   "排班身份 [姓名] —— 群内@，无姓名查本人绑定；带准确姓名设置个人视角；查看排班按本人岗位、站点和部门排序，定时不受影响",
   "稳定性守护 —— 登录自启、异常恢复、连接检测、日志轮转；详询守护帮助。后台检查不调用模型",
@@ -1167,8 +1168,8 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   if (serviceProfile.role !== "ticket" && !dutyIntent && images.length && ocrText) {
     prompt = `【OCR 识别文字】\n${ocrText.slice(0, 4000)}\n\n【用户问题】\n${prompt}`;
   }
-  if (!prompt) {
-    await replyText(frame, "用法：@机器人 <让 Codex 做的事>").catch((e) => log("reply fail", e.message));
+  if (!prompt || (images.length === 0 && isMenuPrompt(originalPrompt))) {
+    await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : FULL_HELP).catch((e) => log("reply fail", e.message));
     return;
   }
   const chatKey = body.chatid || (body.from && body.from.userid) || "unknown";
