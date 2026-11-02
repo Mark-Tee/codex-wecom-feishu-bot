@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { applySiteRecordRules } from "../core/site-assignment.mjs";
 import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
 import { buildPowerDutyPrompt } from "../core/power-duty-prompt.mjs";
 import fs from "node:fs";
@@ -388,12 +389,16 @@ export class ConversationService {
       return;
     }
 
-    const normalized = powerOnly ? { weeklyRows: [], handoverRows: [] } : normalizeDutySpec({
+    let normalized = powerOnly ? { weeklyRows: [], handoverRows: [] } : normalizeDutySpec({
       weeklyRows: parsed.weeklyRows,
       handoverRows: parsed.handoverRows,
     }, operator);
     validateDutySpec(normalized);
     const fillCard = normalizeFillCard(parsed.fillCard);
+    const sitePolicy = powerOnly ? { assignment: null, skipHomeDraft: false } : applySiteRecordRules(normalized, {
+      context, fillCard, config: this.dutyConfig,
+    });
+    if (!powerOnly) normalized = sitePolicy.spec;
     const inferredCard = inferFillCardFromSpec(normalized);
     for (const [key, value] of Object.entries(inferredCard)) {
       if (!fillCard[key]) fillCard[key] = value;
@@ -419,7 +424,7 @@ export class ConversationService {
     const currentDate = powerOnly ? powerDuty.date : inferShiftDateFromSpec(normalized, context);
     this.#setChatValue("pendingDuty", message.chatId, null);
 
-    if (!powerOnly && this.config.duty.workflowMode === "direct-draft") {
+    if (!powerOnly && !sitePolicy.skipHomeDraft && this.config.duty.workflowMode === "direct-draft") {
       const update = await this.draftRepository.update(normalized, {
         currentDate,
         previousDate: context.previousWorkedDate,
@@ -448,7 +453,8 @@ export class ConversationService {
       })),
       fillCard,
       draftSpec: normalized,
-      workflowMode: powerOnly ? "power-duty" : this.config.duty.workflowMode,
+      workflowMode: powerOnly ? "power-duty" : sitePolicy.skipHomeDraft ? "offsite-feishu" : this.config.duty.workflowMode,
+      siteAssignment: sitePolicy.assignment,
       powerDuty: powerOnly ? powerDuty : null,
       currentDate,
       previousDate: context.previousWorkedDate,
@@ -462,6 +468,10 @@ export class ConversationService {
       browserStatus = formatBrowserFillSummary(browserResult, {
         autoSubmit: this.config.feishuBrowser?.autoSubmit,
       });
+    }
+    if (sitePolicy.skipHomeDraft) {
+      await this.#finishOffsiteFill(pending, browserResult, message, responder, streamId);
+      return;
     }
     if (powerOnly) {
       await this.#finishPowerFill(pending, browserResult, message, responder, streamId);
@@ -489,6 +499,18 @@ export class ConversationService {
       ].filter(Boolean).join("\n\n"),
       true,
     );
+  }
+
+  async #finishOffsiteFill(pending, result, message, responder, streamId) {
+    if (result?.submitted && result.verification?.ok) {
+      this.pendingTasks.complete(pending.id, message.chatId, { workflowMode: "offsite-feishu", taskNumber: result.taskNumber });
+    }
+    await responder.replyProgress(streamId, [
+      `当日排班：${pending.siteAssignment.slot} · ${pending.siteAssignment.site} · ${pending.siteAssignment.assignmentType}`,
+      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, skipDraft: true }),
+      `本地短号：${pending.id}。不自动生成本地站点工作记录或交接班，本地站点打卡不作为工作地点证据。`,
+      result?.submitted ? "无需 /done。" : `飞书未确认提交，核对后可 /fill ${pending.id}。`,
+    ].filter(Boolean).join("\n\n"), true);
   }
 
   async #finishPowerFill(pending, result, message, responder, streamId) {
@@ -553,6 +575,10 @@ export class ConversationService {
     pending = this.#reassignTaskIdFromBrowser(pending, message.chatId, result);
     localTaskId = pending.id;
     this.pendingTasks.setBrowserFill(localTaskId, message.chatId, result);
+    if (pending.workflowMode === "offsite-feishu") {
+      await this.#finishOffsiteFill(pending, result, message, responder, streamId);
+      return;
+    }
     if (pending.workflowMode === "power-duty") {
       await this.#finishPowerFill(pending, result, message, responder, streamId);
       return;
@@ -573,6 +599,10 @@ export class ConversationService {
     const { message, responder, localTaskId } = task;
     const streamId = requestId("stream");
     const existing = this.pendingTasks.find(localTaskId, message.chatId);
+    if (existing?.workflowMode === "offsite-feishu") {
+      await responder.replyProgress(streamId, "该工单当天为异地岗位且没有明确本地站点实际工单，不生成本地站点周报或交接班，无需 /done。", true);
+      return;
+    }
     if (existing?.workflowMode === "power-duty") {
       await responder.replyProgress(streamId, `动力值班短号 ${localTaskId} 仅负责飞书建单，不生成腾讯周报或交接班草稿，无需 /done。`, true);
       return;

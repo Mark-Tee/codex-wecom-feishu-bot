@@ -40,7 +40,7 @@ function previousWorkedDate({ rows, styles, headers, config, shiftDate }) {
       config,
       nextStyles: styles.get(index + 1) || [],
     });
-    if (role.role !== "rest" && role.role !== "ambiguous") return key;
+    if (role.role !== "rest" && role.role !== "ambiguous" && role.role !== "offsite_training") return key;
   }
   return "";
 }
@@ -107,8 +107,10 @@ export async function buildDutyContext({
   const schedule = dateRows.map((entry) => {
     const rowStyles = styles.get(entry.index) || [];
     const nextStyles = styles.get(entry.index + 1) || [];
-    const role = shift.start
-      ? classifyRole({ row: entry.row, styles: rowStyles, headers, config: effective, nextStyles })
+    const classified = shift.start || effective.site_rules?.enabled
+      ? classifyRole({ row: entry.row, styles: rowStyles, headers, config: effective, nextStyles }) : null;
+    const role = shift.start || classified?.role === "offsite_training"
+      ? classified
       : { role: "check-schedule", reason: "OCR 未提取到开始时间，需结合图片判断日期" };
     let successor = "";
     if (role.role === "white_primary") {
@@ -191,6 +193,7 @@ export async function buildDutyContext({
     }),
     config: {
       operator: effective.operator_name,
+      siteRules: effective.site_rules || { enabled: false },
       line: effective.line.name,
       teamMembers: effective.line.team_members,
       auxiliaryHeader: effective.line.aux_column_header,

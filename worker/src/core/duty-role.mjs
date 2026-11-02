@@ -1,3 +1,4 @@
+import { resolveSiteAssignment } from "./site-assignment.mjs";
 export function colorMatches(value, expected) {
   const actual = String(value || "").toUpperCase();
   const wanted = String(expected || "").replace(/^#/, "").toUpperCase();
@@ -10,11 +11,13 @@ function cellFill(styles, col) {
 
 export function classifyRole({ row, styles, headers, config, nextStyles = [] }) {
   const operator = config.operator_name;
+  const assignment = resolveSiteAssignment({ row, headers, config, operator });
+  if (assignment?.offsite) return { role: "offsite_training", assignment, reason: "当日安排在异地，不按本地站点打卡推定工作地点" };
   const operatorIndex = headers.indexOf(operator);
-  const auxiliaryHeader = config.line?.aux_column_header || "";
+  const auxiliaryHeader = assignment?.auxiliaryHeader || config.line?.aux_column_header || "";
   const auxIndex = headers.indexOf(auxiliaryHeader);
   if (operatorIndex < 0 || auxIndex < 0) {
-    return { role: "ambiguous", reason: "找不到使用人或网络辅值列" };
+    return { role: "ambiguous", reason: `找不到使用人或${auxiliaryHeader || "部门辅值"}列` };
   }
 
   const value = String(row[operatorIndex] || "").trim();
@@ -31,10 +34,10 @@ export function classifyRole({ row, styles, headers, config, nextStyles = [] }) 
   const auxiliaryMatch = String(row[auxIndex] || "").trim() === operator;
 
   if (auxiliaryMatch && holiday) {
-    return { role: "ambiguous", reason: "法定节假日网络辅值列不应有人" };
+    return { role: "ambiguous", reason: `法定节假日${auxiliaryHeader}列不应有人` };
   }
   if (auxiliaryMatch && (whitePrimaryFill || nightPrimaryFill)) {
-    return { role: "ambiguous", reason: "网络辅值与主值班次冲突" };
+    return { role: "ambiguous", reason: `${auxiliaryHeader}与主值班次冲突` };
   }
   if (auxiliaryMatch) {
     return { role: "white_auxiliary", overtime: holiday };
@@ -77,6 +80,7 @@ export function findShiftPerson({ row, styles, headers, config, shift, auxiliary
     ? config.schedule.primary_white_fill
     : config.schedule.primary_night_fill;
   for (const name of config.line.team_members) {
+    if (resolveSiteAssignment({ row, headers, config, operator: name })?.offsite) continue;
     const index = headers.indexOf(name);
     if (index < 0 || headers[index] === auxiliaryHeader) continue;
     if (String(row[index] || "").trim() === value && colorMatches(cellFill(styles, index), fill)) {

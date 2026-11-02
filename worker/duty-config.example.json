@@ -150,5 +150,46 @@
     "append_position": "next_fully_empty_row",
     "allow_direct_shared_write": false,
     "overwrite_existing_rows": false
+  },
+  "site_rules": {
+    "enabled": false,
+    "home_site": "HOME_SITE",
+    "home_site_aliases": [
+      "HOME_SITE"
+    ],
+    "offsite_site": "OFFSITE_SITE",
+    "departments": [
+      {
+        "name": "系统",
+        "members": [
+          "SYSTEM_MEMBER_1"
+        ],
+        "auxiliary_header": "系统辅值",
+        "offsite_headers": [
+          "数据中心1",
+          "数据中心2",
+          "数据中心3"
+        ],
+        "offsite_role": "测试值班"
+      },
+      {
+        "name": "网络",
+        "members": [
+          "Alice",
+          "Bob"
+        ],
+        "auxiliary_header": "网络辅值",
+        "offsite_headers": [
+          "网络1",
+          "网络2",
+          "网络3"
+        ],
+        "offsite_role": "告警值班",
+        "attendance_may_start_home_slots": [
+          "网络2",
+          "网络3"
+        ]
+      }
+    ]
   }
 }

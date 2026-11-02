@@ -1,5 +1,12 @@
 export const HELP_ENTRIES = Object.freeze([
   {
+    trigger: "跨站点排班自动判断",
+    parameters: "",
+    description: "按业务配置site_rules匹配部门成员、对应辅值列和异地岗位。异地安排优先于本地黄色白班和打卡地点，不自动生成本地巡检、通报或交接；工单明确属于本地实际工作时只登记该工单。",
+    example: "启用site_rules后，发送带明确地点和单号的工单；异地任务无需/done，本地实际工单仍按正常流程确认。",
+    limits: "网络2/3可能先在本地打卡只是可能性，不能据此认定工作地点；缺列、重复岗位、部门冲突时停止询问。成员名单仅保存在本机配置，不提交真实姓名。",
+  },
+  {
     trigger: "动力值班自动识别",
     parameters: "",
     description: "启用 duty.powerDuty.enabled 后，收单前实时读取在线排班；按收到工单的北京时间班次匹配当前使用人。动力值班只建飞书单，指派人员和陪同人留空，不生成周报或交接班。",
