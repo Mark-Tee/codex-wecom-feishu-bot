@@ -33,3 +33,10 @@ test("month and year rollover reads both sheets freshly, never cache fallback",a
  const result=await readScheduleBroadcast({client,config,at:new Date("2026-12-31T00:20:00Z")});assert.deepEqual(result.days.map(d=>d.date),["20261231","20270101"]);assert.equal(calls.length,4);
  client.getCsv=async()=>{throw Error("offline");};await assert.rejects(()=>readScheduleBroadcast({client,config}));
 });
+test("decorative footer color changes do not block, role color changes do",async()=>{
+ let count=0,changeRole=false;
+ const f=fixture();f.rows.push([...f.rows[1]]);f.rows[2][0]="20261103";
+ const client={getSheetInfo:async()=>({sheets:[{sheet_name:"202611",sheet_id:"test",row_count:4,col_count:9}]}),getCsv:async()=>({csv_data:f.rows.map(r=>r.join(",")).join("\n")}),getStyles:async()=>{count++;const cells=[...f.styles,...f.styles.map(c=>({...c,row:2})),{row:3,col:0,background_color:String(count)}].map(c=>({...c}));if(changeRole&&count%2===0)cells[1].background_color="FFFFFFFF";return {cells};}};
+ await readScheduleBroadcast({client,config,at:new Date("2026-11-02T00:20:00Z")});
+ changeRole=true;await assert.rejects(()=>readScheduleBroadcast({client,config,at:new Date("2026-11-02T00:20:00Z")}),/岗位颜色变化/);
+});

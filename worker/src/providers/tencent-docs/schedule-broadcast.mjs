@@ -84,9 +84,14 @@ export async function readScheduleBroadcast({ client, config, at = new Date() })
       const confirm = await client.getCsv(source, sheet.sheet_id, range);
       if (confirm.csv_data !== csv.csv_data) throw new Error("读取期间排班发生变化，下次重新核验");
       const confirmStyles = await client.getStyles(source, sheet.sheet_id, range);
-      const fingerprint = (cells) => JSON.stringify(cells.map(({row,col,background_color}) => [row,col,background_color || ""]).sort((a,b) => a[0]-b[0] || a[1]-b[1]));
+      const parsedRows = parseCsv(csv.csv_data);
+      const relevantDates = new Set([dateKey(today), dateKey(addDays(today, 1))]);
+      const dateColumn = parsedRows[0].indexOf("日期");
+      const relevantRows = new Set(parsedRows.map((row,index) => relevantDates.has(String(row[dateColumn]).trim()) ? index : -1));
+      const relevantColumns = new Set([dateColumn, ...config.site_rules.departments.flatMap((group) => group.members.map((name) => parsedRows[0].indexOf(name)))]);
+      const fingerprint = (cells) => JSON.stringify(cells.filter((cell) => relevantRows.has(cell.row) && relevantColumns.has(cell.col)).map(({row,col,background_color}) => [row,col,background_color || ""]).sort((a,b) => a[0]-b[0] || a[1]-b[1]));
       if (!Array.isArray(confirmStyles.cells) || fingerprint(confirmStyles.cells) !== fingerprint(styleResult.cells)) throw new Error("读取期间岗位颜色变化，下次重新核验");
-      cache.set(sheetName, {rows: parseCsv(csv.csv_data), styles: styleResult.cells});
+      cache.set(sheetName, {rows: parsedRows, styles: styleResult.cells});
     }
     days.push(summarizeSchedule({...cache.get(sheetName), date: dateKey(date), config}));
   }
