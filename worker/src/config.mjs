@@ -45,6 +45,7 @@ export function loadConfig(configPath = path.resolve("config.json")) {
     enabled: Boolean(browser.enabled),
     autoFill: browser.autoFill !== false,
     autoSubmit: Boolean(browser.autoSubmit),
+    writeApprovalFile: String(browser.writeApprovalFile || "").trim(),
     entryMode: browser.entryMode === "form" ? "form" : "record",
     edgeExecutable: browser.edgeExecutable
       || "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",

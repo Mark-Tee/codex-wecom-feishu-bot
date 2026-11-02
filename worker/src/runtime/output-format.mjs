@@ -40,6 +40,8 @@ export function formatStatus({
 
 export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty = false, skipDraft = false } = {}) {
   if (!result?.configured) return "";
+  if(result.requiresReadback)return ["【飞书页面提示已提交】",result.taskNumber ? `任务列表：${result.taskNumber}` : "","尚待本机读回核对新增记录，不代表最终验收通过。","请勿重复建单或发送 /done。"].filter(Boolean).join("\n");
+  if(result.requiresLocalReview)return ["【飞书共享表保护】",result.message,"请勿手工提交或重复 /fill；维护者只读核验后在本机处理。"].join("\n");
   const filled = (result.filled || []).join("、");
   const skipped = (result.skipped || []).join("；");
   if (result.submitted) {

@@ -48,6 +48,7 @@
     "enabled": false,
     "autoFill": true,
     "autoSubmit": false,
+    "writeApprovalFile": "",
     "entryMode": "record",
     "edgeExecutable": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
     "profileDir": "data/feishu-browser-profile",

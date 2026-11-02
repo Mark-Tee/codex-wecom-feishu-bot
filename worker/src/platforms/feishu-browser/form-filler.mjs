@@ -1,3 +1,4 @@
+import {claimWriteApproval,assertSameWriteTarget,assertEmptyNewRecord} from "./write-approval.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { EdgeFormSession, sleep } from "./edge-session.mjs";
@@ -476,6 +477,7 @@ export class FeishuBrowserFormFiller {
       return { ok: false, configured: false, message: "浏览器自动填表未启用" };
     }
     let session;
+    let writeApproval;
     const filled = [];
     const skipped = [];
     const failed = [];
@@ -514,7 +516,9 @@ export class FeishuBrowserFormFiller {
     }
     try {
       stage = "open-browser";
+      writeApproval=claimWriteApproval(this.config,task);
       session = await EdgeFormSession.open(this.config);
+      if(writeApproval)assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
       stage = (this.config.entryMode || "record") === "record"
         ? "open-record"
         : "wait-form";
@@ -538,6 +542,18 @@ export class FeishuBrowserFormFiller {
         shift.prefix,
       );
 
+      if(writeApproval) {
+        assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
+        const selectors=[ids.taskList,ids.transactionNo,ids.roomTicketNo,ids.specificWork].filter(Boolean).map(id=>this.#selector(id));
+        const values=await session.evaluate(`(() => ${JSON.stringify(selectors)}.map(selector => {
+          const root=document.querySelector(selector);
+          if(!root)throw Error("找不到新记录关键字段");
+          const controls=[...root.querySelectorAll('input,textarea,[contenteditable="true"]')];
+          if(!controls.length)throw Error("无法核验新记录字段为空");
+          return controls.map(el=>el.value ?? el.innerText ?? "").join("");
+        }))()`);
+        assertEmptyNewRecord(values);writeApproval.mark("new-form-verified");
+      }
       const workContent = chooseWorkContent(card, options.workContent || []);
       const source = matchOption(
         card.source || this.config.defaults?.source,
@@ -577,6 +593,7 @@ export class FeishuBrowserFormFiller {
         stage = `fill:${label}`;
         const actionStartedAt = Date.now();
         try {
+          if(writeApproval)assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
           if (await action()) filled.push(label);
           else skipped.push(`${label}（原值或人工填写）`);
         } catch (error) {
@@ -618,7 +635,7 @@ export class FeishuBrowserFormFiller {
         date: expectedDate,
         time: expectedTime,
       });
-      if (!verification.ok) {
+      if (!verification.ok || (writeApproval && failed.length)) {
         failed.push("字段核对");
         const diagnostics = await this.#captureFailureDiagnostics(
           session,
@@ -643,6 +660,7 @@ export class FeishuBrowserFormFiller {
           submitted: false,
           timings: { ...timings, total: Date.now() - startedAt },
           message: `字段核对不一致：${verification.mismatches.join("、")}`,
+          requiresLocalReview: Boolean(this.config.writeApprovalFile),
           pageUrl: this.config.formUrl,
         };
       }
@@ -652,7 +670,9 @@ export class FeishuBrowserFormFiller {
         stage = "submit";
         const submitStartedAt = Date.now();
         try {
+          if(writeApproval){assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);writeApproval.mark("submit-started");}
           submitted = await this.#submit(session);
+          writeApproval?.mark("submit-reported-success-needs-readback");
         } finally {
           timings["飞书提交"] = Date.now() - submitStartedAt;
         }
@@ -676,6 +696,7 @@ export class FeishuBrowserFormFiller {
         },
         submitted,
         submittedAt: submitted ? new Date().toISOString() : "",
+        requiresReadback: Boolean(writeApproval && submitted),
         timings: { ...timings, total: Date.now() - startedAt },
         pageUrl: this.config.formUrl,
       };
@@ -702,6 +723,7 @@ export class FeishuBrowserFormFiller {
         timings: { ...timings, total: Date.now() - startedAt },
         diagnostics,
         message: error.message,
+        requiresLocalReview: Boolean(this.config.writeApprovalFile),
         pageUrl: this.config.formUrl,
       };
     } finally {

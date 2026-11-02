@@ -1,3 +1,4 @@
+import {assertSameWriteTarget} from "./write-approval.mjs";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import { CdpConnection, sleep } from "./cdp.mjs";
@@ -67,9 +68,11 @@ export class EdgeFormSession {
       await waitForEndpoint(port, Number(config.launchTimeoutMs || 20_000));
     }
 
-    let target = (await listPages(port)).find((page) => (
-      page.url?.includes("/base/") && page.webSocketDebuggerUrl
-    ));
+    let target = (await listPages(port)).find((page) => {
+      if(!page.url?.includes("/base/") || !page.webSocketDebuggerUrl)return false;
+      if(!config.writeApprovalFile)return true;
+      try{assertSameWriteTarget(page.url,config.formUrl);return true;}catch{return false;}
+    });
     if (!target) target = await createPage(port, config.formUrl);
     if (!target?.webSocketDebuggerUrl) throw new Error("Edge 页面没有可用的调试连接");
 
@@ -92,7 +95,10 @@ export class EdgeFormSession {
         && /添加记录/.test(document.body?.innerText || "");
       return hasField || hasRecordView;
     })()`);
-    if (currentUrl !== desiredUrl) {
+    if(config.writeApprovalFile){
+      assertSameWriteTarget(currentUrl,desiredUrl);
+      // Never navigate away from an existing record card before the caller can reject it.
+    } else if (currentUrl !== desiredUrl) {
       await connection.evaluate(`location.assign(${JSON.stringify(config.formUrl)})`);
     } else if (!hasForm) {
       await connection.evaluate("location.reload()").catch(() => {});

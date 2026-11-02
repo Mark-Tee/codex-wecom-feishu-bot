@@ -79,6 +79,9 @@ export class ConversationService {
 
   async handle(message, responder) {
     const text = String(message.text || "").trim();
+    if(this.config.feishuBrowser?.writeApprovalFile && /^\/done(?:\s|$)/iu.test(text)){
+      await responder.replyText("当前为飞书共享表单条测试，腾讯草稿暂不写入，请先完成本机核验。");return;
+    }
     const denied=remotePolicy.remoteDenial(text);
     if(denied){await responder.replyText(denied);return;}
     if (text.startsWith("/pair")) {
@@ -505,7 +508,7 @@ export class ConversationService {
   }
 
   async #finishOffsiteFill(pending, result, message, responder, streamId) {
-    if (result?.submitted && result.verification?.ok) {
+    if (result?.submitted && result.verification?.ok && !result.requiresReadback) {
       this.pendingTasks.complete(pending.id, message.chatId, { workflowMode: "offsite-feishu", taskNumber: result.taskNumber });
     }
     await responder.replyProgress(streamId, [
@@ -517,7 +520,7 @@ export class ConversationService {
   }
 
   async #finishPowerFill(pending, result, message, responder, streamId) {
-    if (result?.submitted && result.verification?.ok) {
+    if (result?.submitted && result.verification?.ok && !result.requiresReadback) {
       this.pendingTasks.complete(pending.id, message.chatId, { taskNumber: result.taskNumber, workflowMode: "power-duty" });
     }
     const text = [
