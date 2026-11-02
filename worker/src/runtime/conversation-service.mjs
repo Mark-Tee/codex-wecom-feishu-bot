@@ -1,3 +1,4 @@
+import remotePolicy from "../core/remote-policy.cjs";
 import crypto from "node:crypto";
 import { applySiteRecordRules } from "../core/site-assignment.mjs";
 import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
@@ -78,6 +79,8 @@ export class ConversationService {
 
   async handle(message, responder) {
     const text = String(message.text || "").trim();
+    const denied=remotePolicy.remoteDenial(text);
+    if(denied){await responder.replyText(denied);return;}
     if (text.startsWith("/pair")) {
       const code = text.split(/\s+/)[1] || "";
       const result = this.access.pair(message.userId, code);
@@ -86,7 +89,7 @@ export class ConversationService {
     }
     if (!this.access.isAuthorized(message.userId)) {
       await responder.replyText(
-        "你还没有配对。请在电脑上查看 pairing-code.txt，然后发送 /pair <配对码>。",
+        "无权限：该账号尚未授权，请联系维护者在本机配置。",
       );
       return;
     }

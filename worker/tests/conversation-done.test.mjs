@@ -176,9 +176,9 @@ test("跨会话短号和 /help 都有明确结果", async () => {
 
   const help = responseCollector();
   await service.handle(message("/help"), help.responder);
-  assert.match(help.replies.at(-1).text, /\/done <短号>/);
-  assert.match(help.replies.at(-1).text, /\/fill <短号>/);
-  assert.match(help.replies.at(-1).text, /飞书中创建、核对和提交任务/);
+  assert.match(help.replies.at(-1).text, /\/done 短号/);
+  assert.match(help.replies.at(-1).text, /\/fill 短号/);
+  assert.match(help.replies.at(-1).text, /真实写入待实单验收/);
 });
 
 test("/fill 重新填写已保存的本地工单", async () => {
@@ -360,4 +360,13 @@ test("浏览器自动提交后只回复结果，不再发送完整填报卡", as
   assert.equal(pendingTasks.activeCount("chat-a"), 1);
   assert.equal(pendingTasks.find("6", "chat-a").browserFill.taskNumber, "WN20261026006");
   assert.equal(pendingTasks.find("1", "chat-a"), null);
+});
+
+test("远程管理与源表修改拒绝且不调用模型或写表",async()=>{
+ let called=0;
+ const {service}=createService({update:async()=>{called++;},runner:{run:async()=>{called++;throw Error("不应调用");},stop(){called++;}}});
+ for(const command of ["/stop","/cancel 1","/invite","/operators","/pair 123456","修改排班表","删除配置文件"]){
+  const result=responseCollector();await service.handle(message(command),result.responder);assert.match(result.replies.at(-1).text,/无权限/);
+ }
+ assert.equal(called,0);
 });

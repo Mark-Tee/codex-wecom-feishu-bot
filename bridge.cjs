@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+const {remoteDenial}=require("./lib/remote-policy.cjs");
+const {ROSTER_HELP}=require("./lib/roster-service.cjs");
 const { startScheduleBroadcast } = require("./lib/schedule-broadcast.cjs");
 const {normalizeRosterCommand,isMenuPrompt} = require("./lib/roster-command.cjs");
 let scheduleBroadcast = null;
@@ -1147,13 +1149,16 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   saveState(state);
 
   const userId = body.from && body.from.userid ? body.from.userid : "";
+
+
+  const rosterNormalized = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
+  const originalPrompt = serviceProfile.role === "ticket" ? normalizeTicketCommand(rosterNormalized) : rosterNormalized;
+  const denied=remoteDenial(originalPrompt);
+  if(denied){await replyText(frame,denied);return;}
   if (cfg.allowUsers.length && !cfg.allowUsers.includes(userId)) {
     log("ignore user", userId);
     return;
   }
-
-  const rosterNormalized = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
-  const originalPrompt = serviceProfile.role === "ticket" ? normalizeTicketCommand(rosterNormalized) : rosterNormalized;
   const ticketDecision = serviceProfile.role === "ticket" ? ticketRoute(originalPrompt, images.length > 0) : null;
   const dutyIntent = serviceProfile.role === "ticket" ? ticketDecision === "worker" : isDutyReportIntent(originalPrompt, images);
   let prompt = originalPrompt;
@@ -1169,7 +1174,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     prompt = `【OCR 识别文字】\n${ocrText.slice(0, 4000)}\n\n【用户问题】\n${prompt}`;
   }
   if (!prompt || (images.length === 0 && isMenuPrompt(originalPrompt))) {
-    await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : FULL_HELP).catch((e) => log("reply fail", e.message));
+    await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP).catch((e) => log("reply fail", e.message));
     return;
   }
   const chatKey = body.chatid || (body.from && body.from.userid) || "unknown";
@@ -1247,7 +1252,9 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     return;
   }
 
-  if (await handleHelpQuery(frame, prompt)) return;
+  if (/^(?:帮助|\/help)(?:\s|$)/iu.test(prompt)) {
+    await replyText(frame,serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP);return;
+  }
 
   if (prompt === "/invite" || prompt === "/paircode") {
     const code = String(Math.floor(100000 + Math.random() * 900000));

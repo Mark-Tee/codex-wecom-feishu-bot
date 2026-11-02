@@ -14,9 +14,9 @@ test("service profiles separate roles ports and entry points, reject invalid con
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test("ticket role keeps roster and unrelated tasks out of model and worker routes",()=>{
- for(const text of ["查看排班","绑定排班群","排班身份 测试甲"])assert.equal(ticketRoute(text),"roster");
- for(const text of ["删除文件","帮我做一个网站","/new","/usage"])assert.equal(ticketRoute(text),"help");
- for(const text of ["/as 测试甲","我是测试甲","/pending","/done 12","/fill 12","/cancel 12","/draft","请处理工单"])assert.equal(ticketRoute(text),"worker");
+ for(const text of ["查看排班","排班身份 测试甲"])assert.equal(ticketRoute(text),"roster");
+ for(const text of ["帮我做一个网站","/usage"])assert.equal(ticketRoute(text),"help");
+ for(const text of ["/as 测试甲","我是测试甲","/pending","/done 12","/fill 12","/draft","请处理工单"])assert.equal(ticketRoute(text),"worker");
  assert.equal(ticketRoute("/help"),"local");assert.equal(ticketRoute("/help",true),"local");assert.equal(ticketRoute("查看排班",true),"roster");assert.equal(ticketRoute("",true),"worker");
  assert.equal(normalizeTicketCommand("BOT /as 测试甲"),"/as 测试甲");assert.equal(ticketRoute("BOT /pending"),"worker");assert.equal(ticketRoute("BOT /help"),"local");assert.equal(normalizeTicketCommand("BOT 普通聊天"),"BOT 普通聊天");
 });
@@ -24,11 +24,14 @@ test("roster service refuses unauthorized senders and never dispatches unrelated
  const state={__operators:["owner"]},replies=[];let dispatched=0,saves=0;
  const handle=createRosterService({state,save:()=>saves++,controller:{command:async(_,text)=>{if(text==="查看排班"){dispatched++;return true;}return false;}},reply:async(_,text)=>replies.push(text),health:()=>({authenticated:true}),makeCode:()=>"123456"});
  const frame=(id,userId,text,msgtype="text")=>({cmd:"aibot_msg_callback",body:{msgid:id,msgtype,chattype:"group",chatid:"test-group",from:{userid:userId},text:{content:text}}});
- await handle(frame("a","stranger","查看排班"));assert.equal(dispatched,0);assert.match(replies.at(-1),/先发送/);
+ await handle(frame("a","stranger","查看排班"));assert.equal(dispatched,0);assert.match(replies.at(-1),/无权限/);
  await handle(frame("menu","stranger","@Assistant BOT"));assert.match(replies.at(-1),/【排班机器人】/);assert.equal(dispatched,0);
- await handle(frame("menu-empty","owner","@排班机器人"));assert.match(replies.at(-1),/只@我不附文字/);assert.equal(dispatched,0);
+ await handle(frame("menu-empty","owner","@排班机器人"));assert.match(replies.at(-1),/只@我/);assert.equal(dispatched,0);
  await handle(frame("b","owner","@Assistant BOT 查看排班"));assert.equal(dispatched,1);await handle(frame("b","owner","查看排班"));assert.equal(dispatched,1);
- await handle(frame("c","owner","创建飞书工单"));assert.match(replies.at(-1),/不处理工单/);
+ await handle(frame("c","owner","创建飞书工单"));assert.match(replies.at(-1),/只读查询/);
  await handle(frame("d","owner","","image"));assert.match(replies.at(-1),/不识别工单图片/);assert.equal(dispatched,1);
- await handle(frame("e","owner","/invite"));assert.equal(state.__pairing.code,"123456");await handle(frame("f","stranger","/pair 123456"));assert.ok(state.__operators.includes("stranger"));assert.equal(state.__pairing,undefined);assert.ok(saves>0);
+ for(const command of ["/invite","/pair 123456","绑定排班群","解绑排班群","请把排班表改成测试甲"]) {
+  await handle(frame(command,"owner",command));assert.match(replies.at(-1),/无权限/);
+ }
+ assert.equal(state.__pairing,undefined);assert.deepEqual(state.__operators,["owner"]);assert.equal(dispatched,1);assert.ok(saves>0);
 });
