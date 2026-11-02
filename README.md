@@ -1,5 +1,8 @@
 # codex-wecom-feishu-bot
 
+> 当前权限（2026-11-02）：排班与工单已拆分。群聊、私聊均禁止管理操作及修改源文件；下文旧版配对、授权、停止、取消和绑定流程仅为历史说明，不能作为当前远程操作指引。维护留在本机；真实写入待实单验收。
+
+
 [简体中文](README.md) | [English](README.en.md)
 
 [![CI](https://github.com/Mark-Tee/codex-wecom-feishu-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Mark-Tee/codex-wecom-feishu-bot/actions/workflows/ci.yml)
@@ -138,20 +141,21 @@ powershell -ExecutionPolicy Bypass -File .\install-startup.ps1
 
 `6` 来自飞书任务号 `WN20261026006` 的后三位。
 
-## 命令
+## 当前群聊命令
 
-| 命令 | 说明 |
-|---|---|
-| `/help` | 显示完整指令 |
-| `/pair <码>` | 配对当前企业微信用户 |
-| `/invite` | 生成新的本地配对码 |
-| `/new` | 清空当前会话 Codex 上下文 |
-| `/status` | 查看连接、队列、进程和待办 |
-| `/stop` | 停止当前任务并清空队列 |
-| `/pending` | 查看未完成工单短号 |
-| `/fill <短号>` | 重新执行飞书填写 |
-| `/cancel <短号>` | 取消尚未完成的本地工单 |
-| `/done <短号>` | 更新腾讯文档草稿 |
+| 机器人 | 命令 | 说明 |
+|---|---|---|
+| 两者 | 只@、`/help` | 当前角色菜单 |
+| 两者 | `/status` | 连接或运行状态 |
+| 排班 | `查看排班` | 实时读取今天和明天排班 |
+| 排班 | `排班身份 [姓名]` | 查看或设置个人视角 |
+| 排班 | `排班推送状态` | 查看07:00/17:00推送状态 |
+| 工单 | `/as 姓名` | 设置本会话使用人 |
+| 工单 | `/pending` | 查看本会话待办 |
+| 工单 | 工单图片、`/fill 短号` | 创建或重试飞书填写与提交，真实写入待验收 |
+| 工单 | `/done 短号` | 确认已提交后更新固定腾讯草稿，真实写入待验收 |
+
+管理操作仅在本机维护，不提供远程配对、授权、停止、取消或绑定入口。详见 [权限说明](docs/remote-safety.md)。
 
 ## 飞书填写安全规则
 
