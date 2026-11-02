@@ -17,10 +17,10 @@ test("personal first, preferred site then department, no mutation or cross-user 
  const system={name:"测试系统",white:["系统甲"],night:["系统乙"],auxiliary:[],standby:[],offsite:[{name:"系统丙",slot:"学习1"}],offsiteRole:"测试"};
  const network={name:"测试网络",white:["网络甲"],night:["网络乙"],auxiliary:[],standby:["网络丁"],offsite:[{name:"网络丙",slot:"异地1"}],offsiteRole:"告警"};
  const snapshot={home:"HOME_SITE",offsite:"OFFSITE_SITE",fetchedAt:"2026-11-02T01:00:00Z",days:[{date:"20261102",label:"今天",groups:[system,network],power:{white:["系统甲"],night:["网络乙"]},warnings:[],people:[{name:"网络甲",department:"测试网络",roles:["白班主值"],site:"HOME_SITE"},{name:"网络丙",department:"测试网络",roles:["白班·告警"],site:"OFFSITE_SITE"},{name:"网络休",department:"测试网络",roles:["调休"],site:"",leave:true}]}]};
- const home=formatScheduleBroadcast(snapshot,{viewer:"网络甲"});assert.ok(home.indexOf("你的排班")<home.indexOf("【HOME SITE】"));assert.ok(home.indexOf("测试网络｜")<home.indexOf("测试系统｜"));assert.ok(home.indexOf("【HOME SITE】")<home.indexOf("【OFFSITE SITE】"));
- const away=formatScheduleBroadcast(snapshot,{viewer:"网络丙"});assert.ok(away.indexOf("【OFFSITE SITE】")<away.indexOf("【HOME SITE】"));assert.ok(away.indexOf("测试网络告警")<away.indexOf("测试系统测试"));
+ const home=formatScheduleBroadcast(snapshot,{viewer:"网络甲"});assert.ok(home.indexOf("你的排班")<home.indexOf("HOME SITE · "));assert.ok(home.indexOf("HOME SITE · 测试网络")<home.indexOf("HOME SITE · 测试系统"));assert.ok(home.indexOf("HOME SITE · ")<home.indexOf("OFFSITE SITE · "));
+ const away=formatScheduleBroadcast(snapshot,{viewer:"网络丙"});assert.ok(away.indexOf("OFFSITE SITE · ")<away.indexOf("HOME SITE · "));assert.ok(away.indexOf("OFFSITE SITE · 测试网络")<away.indexOf("OFFSITE SITE · 测试系统"));
  const rest=formatScheduleBroadcast(snapshot,{viewer:"网络休"});assert.match(rest,/今天：调休\n/);assert.doesNotMatch(rest,/今天：调休｜HOME_SITE/);
- const all=formatScheduleBroadcast(snapshot);assert.doesNotMatch(all,/你的排班/);assert.ok(all.indexOf("测试系统｜")<all.indexOf("测试网络｜"));assert.equal(snapshot.days[0].groups[0],system);
+ const all=formatScheduleBroadcast(snapshot);assert.doesNotMatch(all,/你的排班/);assert.ok(all.indexOf("HOME SITE · 测试系统")<all.indexOf("HOME SITE · 测试网络"));assert.equal(snapshot.days[0].groups[0],system);
 });
 test("personal role preserves dual power/main roles and does not turn blank into standby",()=>{
  const f=fixture();const day=summarizeSchedule(f);assert.deepEqual(day.people.find(p=>p.name==="甲").roles,["白班主值","动力白班"]);
@@ -59,4 +59,13 @@ test("decorative footer color changes do not block, role color changes do",async
 test("single date selection formats tomorrow as tomorrow, not today",async()=>{
  const f=fixture("20261103");const client={getSheetInfo:async()=>({sheets:[{sheet_name:"202611",sheet_id:"test",row_count:2,col_count:9}]}),getCsv:async()=>({csv_data:f.rows.map(r=>r.join(",")).join("\n")}),getStyles:async()=>({cells:f.styles})};
  const snapshot=await readScheduleBroadcast({client,config,at:new Date("2026-11-02T09:00:00Z"),offsets:[1]});assert.deepEqual(snapshot.days.map(d=>d.date),["20261103"]);assert.match(formatScheduleBroadcast(snapshot),/【次日排班】/);assert.match(formatScheduleBroadcast(snapshot),/明天 11\/03/);
+});
+
+test("phone layout uses short role lines, merges same-shift power and never invents vacant department posts",()=>{
+ const day=summarizeSchedule(fixture());day.groups[0].standby=["待命甲甲","待命乙乙","待命丙丙","待命丁丁"];
+ const text=formatScheduleBroadcast({days:[day],fetchedAt:"2026-11-02T01:00:00Z",home:"HOME_SITE",offsite:"OFFSITE_SITE"},{viewer:"甲"});
+ assert.match(text,/白班主值：甲（兼动力）/);assert.match(text,/夜班主值：乙（兼动力）/);
+ assert.doesNotMatch(text,/白班主值[^\n]*夜班主值/);assert.doesNotMatch(text,/动力[^\n]*未安排/);
+ assert.match(text,/\n\n\*\*HOME SITE · 测试部门\*\*\n/);assert.match(text,/待命（续）：/);
+ const nameLines=text.split("\n").filter(line=>line.startsWith("待命：")||line.startsWith("待命（续）："));assert.ok(nameLines.length>1);
 });

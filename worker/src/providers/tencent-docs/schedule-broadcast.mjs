@@ -121,13 +121,29 @@ export async function readScheduleBroadcast({ client, config, at = new Date(), o
 
 export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
   const names = (list) => list.map(clean).join("、") || "未安排";
+  const peopleLines = (label, list) => {
+    let line = `${label}：`;
+    for (const person of list.map(clean)) {
+      const separator = line.endsWith("：") ? "" : "、";
+      // Use text width, not padding or a Markdown table, for narrow phone bubbles.
+      const width = (text) => [...text].reduce((sum,c) => sum + (c.charCodeAt(0) > 255 ? 2 : 1),0);
+      if (width(line + separator + person) > 36 && !line.endsWith("：")) { lines.push(line); line = `${label}（续）：${person}`; }
+      else line += separator + person;
+    }
+    lines.push(line);
+  };
   const lines = [snapshot.days.length === 1 ? `【${snapshot.days[0].label === "明天" ? "次日" : "今日"}排班】` : "【今日 · 明日排班】"];
   const person = snapshot.days[0].people?.find((item) => item.name === viewer);
   if (person) {
     lines.push("", `**你的排班｜${clean(viewer)} · ${clean(person.department)}**`);
     snapshot.days.forEach((day, i) => {
       const own = day.people?.find((item) => item.name === viewer);
-      lines.push(`${day.label || (i === 0 ? "今天" : "明天")}：${own ? names(own.roles) + (own.site ? `｜${clean(own.site)}（排班）` : "") : "身份不在当日名单，待核对"}`);
+      const label = day.label || (i === 0 ? "今天" : "明天");
+      if (!own) lines.push(`${label}：身份不在名单，待核对`);
+      else if (own.site) {
+        lines.push(`${label}：${clean(own.site)}`);
+        for (const role of own.roles) lines.push(clean(role));
+      } else lines.push(`${label}：${names(own.roles)}`);
     });
   } else if (viewer) lines.push("", "个人身份不在本次排班名单中，以下按全员视角展示，请核对排班身份。");
   snapshot.days.forEach((day, i) => {
@@ -138,25 +154,35 @@ export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
     const sites = own?.site === snapshot.offsite ? [snapshot.offsite,snapshot.home] : [snapshot.home,snapshot.offsite];
     for (const site of sites) {
       if (site === snapshot.offsite && !groups.some((group) => group.offsite.length)) continue;
-      lines.push(`【${clean(site)}】`);
       for (const group of groups) {
         if (site === snapshot.offsite) {
-          if (group.offsite.length) lines.push(`${clean(group.name)}${clean(group.offsiteRole)}：${group.offsite.map((p) => `${clean(p.name)}（${clean(p.slot)}）`).join("、")}`);
+          if (group.offsite.length) {
+            lines.push("", `**${clean(site)} · ${clean(group.name)}**`);
+            for (const p of group.offsite) lines.push(`${clean(group.offsiteRole)}：${clean(p.name)}（${clean(p.slot)}）`);
+          }
         } else {
-          lines.push(`${clean(group.name)}｜白班主值 ${names(group.white)} · 夜班主值 ${names(group.night)}`, `白班辅值：${group.auxiliary === null ? "无（周末/节假日）" : names(group.auxiliary)}`);
           const homePower = (kind) => day.power[kind].filter((name) => day.people?.some((p) => p.name === name && p.department === group.name && p.site === snapshot.home));
           const whitePower = homePower("white"), nightPower = homePower("night");
-          if (whitePower.length || nightPower.length) lines.push(`动力｜白班 ${names(whitePower)} · 夜班 ${names(nightPower)}`);
-          if (group.standby.length) lines.push(`待命：${names(group.standby)}`);
+          const primary = (list,power) => list.map((name) => `${clean(name)}${power.includes(name) ? "（兼动力）" : ""}`).join("、");
+          lines.push("", `**${clean(site)} · ${clean(group.name)}**`, `白班主值：${primary(group.white,whitePower)}`, `白班辅值：${group.auxiliary === null ? "无（周末/节假日）" : names(group.auxiliary)}`, `夜班主值：${primary(group.night,nightPower)}`);
+          const otherWhite = whitePower.filter((name) => !group.white.includes(name));
+          const otherNight = nightPower.filter((name) => !group.night.includes(name));
+          if (otherWhite.length) peopleLines("动力白班",otherWhite);
+          if (otherNight.length) peopleLines("动力夜班",otherNight);
+          if (group.standby.length) peopleLines("待命",group.standby);
         }
       }
     }
     const unknownPower = (kind) => day.power[kind].filter((name) => !day.people?.some((p) => p.name === name && p.site));
     const whiteUnknown = unknownPower("white"), nightUnknown = unknownPower("night");
-    if (whiteUnknown.length || nightUnknown.length) lines.push(`动力（地点待核对）｜白班 ${names(whiteUnknown)} · 夜班 ${names(nightUnknown)}`);
+    if (whiteUnknown.length || nightUnknown.length) {
+      lines.push("", "**动力 · 地点待核对**");
+      if (whiteUnknown.length) peopleLines("动力白班",whiteUnknown);
+      if (nightUnknown.length) peopleLines("动力夜班",nightUnknown);
+    }
     day.warnings.forEach((warning) => lines.push(`⚠ ${clean(warning)}`));
   });
-  lines.push("", "白班08:30–17:30｜夜班17:30–次日08:30", "白班辅值09:00–15:00；08:30前仍属前一日夜班。", "以上为各日期排班，不代表实际出勤；兼任岗位并列，待命仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "发送后调班请以在线表为准，可@机器人发送“查看排班”重新读取。");
+  lines.push("", "白班 08:30–17:30", "夜班 17:30–次日08:30", "白班辅值 09:00–15:00", "08:30前仍属前一天夜班。", "以上为排班，不代表实际出勤。", "待命人员仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "调班后可发送“查看排班”重新读取。");
   const text = lines.join("\n");
   if (Buffer.byteLength(text, "utf8") > 3900) throw new Error("排班通知过长，停止发送以免截断");
   return text;
