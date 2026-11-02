@@ -61,6 +61,7 @@ export class TencentDocsClient {
       throw new Error(`${name} 失败：${message}`);
     }
     const result = payload.result || {};
+    if (result.isError) throw new Error(`${name} 返回工具错误，未确认成功`);
     if (result.structuredContent !== undefined) return result.structuredContent;
     return JSON.parse(result.content?.[0]?.text || "{}");
   }

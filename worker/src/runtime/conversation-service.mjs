@@ -444,11 +444,12 @@ export class ConversationService {
       const update = await this.draftRepository.update(normalized, {
         currentDate,
         previousDate: context.previousWorkedDate,
+        order: fillCard,
         context,
       });
       const text = [
-        "**腾讯文档草稿已更新**",
-        `使用人 ${operator} · 周报新增 ${normalized.weeklyRows.length} 行 · 交接班新增 ${normalized.handoverRows.length} 行`,
+        update.duplicate ? "**同一业务工单已处理，未重复写入**" : "**腾讯文档草稿已更新**",
+        update.duplicate ? "已拦截同一工单的重复提交。" : `使用人 ${operator} · 周报新增 ${normalized.weeklyRows.length} 行 · 交接班新增 ${normalized.handoverRows.length} 行`,
         `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
         update.fileUrl,
       ].join("\n");
@@ -650,6 +651,7 @@ export class ConversationService {
       const update = await this.draftRepository.update(spec, {
         currentDate: pending.currentDate,
         previousDate: pending.previousDate,
+        order: pending.fillCard,
         context: {
           workDate: pending.currentDate,
           shiftDate: pending.currentDate,
@@ -662,9 +664,9 @@ export class ConversationService {
         keptDates: update.keptDates,
       });
       const text = [
-        "**腾讯文档草稿已更新**",
+        update.duplicate ? "**同一业务工单已处理，未重复写入**" : "**腾讯文档草稿已更新**",
         `本地短号 ${localTaskId} · 使用人 ${pending.operator}`,
-        `周报新增 ${spec.weeklyRows.length} 行 · 交接班新增 ${spec.handoverRows.length} 行`,
+        update.duplicate ? "已拦截同一工单的重复提交。" : `周报新增 ${spec.weeklyRows.length} 行 · 交接班新增 ${spec.handoverRows.length} 行`,
         `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
         update.fileUrl,
       ].filter(Boolean).join("\n");
