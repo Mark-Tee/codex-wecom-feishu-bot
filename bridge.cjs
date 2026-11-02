@@ -1547,7 +1547,7 @@ function handleFrame(frame) {
   }
 }
 
-function startNotifyServer() {
+function startNotifyServer(onReady) {
   const server = http.createServer((req, res) => {
     if (req.method !== "POST" || req.url !== "/notify") {
       res.writeHead(404, { "content-type": "application/json" });
@@ -1580,8 +1580,14 @@ function startNotifyServer() {
       }
     });
   });
-  server.on("error", (e) => log("notify server error", e.message));
-  server.listen(8799, "127.0.0.1", () => log("notify endpoint:", "http://127.0.0.1:8799/notify"));
+  server.on("error", (e) => {
+    log(e.code === "EADDRINUSE" ? "已有机器人实例或端口被占用，本实例退出，不重复连接" : "机器人启动端口失败", e.code || "unknown");
+    process.exit(1);
+  });
+  server.listen({port: 8799, host: "127.0.0.1", exclusive: true}, () => {
+    log("notify endpoint:", "http://127.0.0.1:8799/notify");
+    onReady();
+  });
 }
 
 function selfTest() {
@@ -1717,26 +1723,28 @@ function ensurePairingCode() {
 }
 
 if (!process.argv.includes("--ask") && !dutyDryRunMode) {
-  ensurePairingCode();
-  cleanupCaches();
-  setInterval(cleanupCaches, 6 * 3600 * 1000);
-  setTimeout(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 10000);
-  setInterval(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 60 * 1000);
-  refreshSystemInfo();
-  setInterval(refreshSystemInfo, 30000);
-  startNotifyServer();
-  if (cfg.dutyAgent.enabled) scheduleBroadcast = startScheduleBroadcast({
-    workerRoot: cfg.dutyAgent.repoPath, configPath: cfg.dutyAgent.configPath,
-    state, save: saveState, send: sendChatMessage, reply: replyText,
-    ready: () => connection.authenticated, log,
+  // Acquire the existing local endpoint before pairing, timers or platform connections.
+  startNotifyServer(() => {
+    ensurePairingCode();
+    cleanupCaches();
+    setInterval(cleanupCaches, 6 * 3600 * 1000);
+    setTimeout(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 10000);
+    setInterval(() => maybeSendDailySummary().catch((e) => log("usage summary error", e.message)), 60 * 1000);
+    refreshSystemInfo();
+    setInterval(refreshSystemInfo, 30000);
+    if (cfg.dutyAgent.enabled) scheduleBroadcast = startScheduleBroadcast({
+      workerRoot: cfg.dutyAgent.repoPath, configPath: cfg.dutyAgent.configPath,
+      state, save: saveState, send: sendChatMessage, reply: replyText,
+      ready: () => connection.authenticated, log,
+    });
+    connection.start();
+    if (cfg.dutyAgent.enabled) {
+      startPowerRosterRefresh({
+        workerRoot: cfg.dutyAgent.repoPath,
+        configPath: cfg.dutyAgent.configPath,
+        log,
+      }).catch(() => log("动力值班排班定时刷新未启动，请检查worker配置"));
+    }
+    log("bridge started, workdir =", cfg.workdir, "| codex =", CODEX_EXE);
   });
-  connection.start();
-  if (cfg.dutyAgent.enabled) {
-    startPowerRosterRefresh({
-      workerRoot: cfg.dutyAgent.repoPath,
-      configPath: cfg.dutyAgent.configPath,
-      log,
-    }).catch(() => log("动力值班排班定时刷新未启动，请检查worker配置"));
-  }
-  log("bridge started, workdir =", cfg.workdir, "| codex =", CODEX_EXE);
 }
