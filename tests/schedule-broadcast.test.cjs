@@ -48,6 +48,14 @@ test("personal identity is per sender and scheduled broadcasts never inherit it"
  await f.c.command({body:{chattype:"group",chatid:"test-group"}},"排班身份 测试甲");assert.match(f.replies.at(-1),/未取得发起人/);
  assert.equal(await f.c.command(a,"排班身份 测试 甲"),true);assert.match(f.replies.at(-1),/用法/);
 });
+test("multiword mention residue uses the live roster reader and the sender identity",async()=>{
+ const selections=[];const f=fixture({members:async()=>["测试甲"],read:async(_,selection)=>{selections.push(selection);return "在线排班";}});
+ const frame={body:{chattype:"group",chatid:"test-group",from:{userid:"user-a"}}};
+ assert.equal(await f.c.command(frame,"BOT 排班身份 测试甲"),true);
+ assert.equal(await f.c.command(frame,"BOT 查看排班"),true);
+ assert.deepEqual(selections,[{viewer:"测试甲"}]);assert.equal(f.replies.at(-1),"在线排班");
+ assert.equal(await f.c.command(frame,"BOT 请解释排班实现"),false);
+});
 
 test("morning and evening select one date, each deduplicates independently", async()=>{
  const selected=[];const f=fixture({read:async(_,options)=>{selected.push(options.offsets);return "fresh";}});
