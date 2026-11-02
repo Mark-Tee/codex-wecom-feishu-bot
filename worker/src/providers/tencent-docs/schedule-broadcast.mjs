@@ -64,14 +64,15 @@ export function summarizeSchedule({ rows, styles, date, config }) {
   return {date, groups, power, warnings};
 }
 
-export async function readScheduleBroadcast({ client, config, at = new Date() }) {
+export async function readScheduleBroadcast({ client, config, at = new Date(), offsets = [0, 1] }) {
   if (config.sources?.mode !== "online") throw new Error("排班播报仅支持在线表");
   const source = config.sources.online.schedule;
   const info = await client.getSheetInfo(source);
   const today = shanghaiDate(at);
   const cache = new Map();
   const days = [];
-  for (const date of [today, addDays(today, 1)]) {
+  for (const offset of offsets) {
+    const date = addDays(today, offset);
     const sheetName = sheetForDate(date, config.schedule.sheet_format);
     if (!cache.has(sheetName)) {
       const sheet = info.sheets.find((s) => s.sheet_name === sheetName);
@@ -85,7 +86,7 @@ export async function readScheduleBroadcast({ client, config, at = new Date() })
       if (confirm.csv_data !== csv.csv_data) throw new Error("读取期间排班发生变化，下次重新核验");
       const confirmStyles = await client.getStyles(source, sheet.sheet_id, range);
       const parsedRows = parseCsv(csv.csv_data);
-      const relevantDates = new Set([dateKey(today), dateKey(addDays(today, 1))]);
+      const relevantDates = new Set(offsets.map((value) => dateKey(addDays(today, value))));
       const dateColumn = parsedRows[0].indexOf("日期");
       const relevantRows = new Set(parsedRows.map((row,index) => relevantDates.has(String(row[dateColumn]).trim()) ? index : -1));
       const relevantColumns = new Set([dateColumn, ...config.site_rules.departments.flatMap((group) => group.members.map((name) => parsedRows[0].indexOf(name)))]);
@@ -93,17 +94,17 @@ export async function readScheduleBroadcast({ client, config, at = new Date() })
       if (!Array.isArray(confirmStyles.cells) || fingerprint(confirmStyles.cells) !== fingerprint(styleResult.cells)) throw new Error("读取期间岗位颜色变化，下次重新核验");
       cache.set(sheetName, {rows: parsedRows, styles: styleResult.cells});
     }
-    days.push(summarizeSchedule({...cache.get(sheetName), date: dateKey(date), config}));
+    days.push({...summarizeSchedule({...cache.get(sheetName), date: dateKey(date), config}), label:offset === 0 ? "今天" : "明天"});
   }
   return {days, fetchedAt: new Date().toISOString(), home: config.site_rules.home_site, offsite: config.site_rules.offsite_site};
 }
 
 export function formatScheduleBroadcast(snapshot) {
   const names = (list) => list.map(clean).join("、") || "未安排";
-  const lines = ["【今日 · 明日排班】"];
+  const lines = [snapshot.days.length === 1 ? `【${snapshot.days[0].label === "明天" ? "次日" : "今日"}排班】` : "【今日 · 明日排班】"];
   snapshot.days.forEach((day, i) => {
     const date = new Date(`${day.date.slice(0,4)}-${day.date.slice(4,6)}-${day.date.slice(6,8)}T00:00:00Z`);
-    lines.push("", `**${i === 0 ? "今天" : "明天"} ${day.date.slice(4,6)}/${day.date.slice(6,8)} 周${"日一二三四五六"[date.getUTCDay()]}**`);
+    lines.push("", `**${day.label || (i === 0 ? "今天" : "明天")} ${day.date.slice(4,6)}/${day.date.slice(6,8)} 周${"日一二三四五六"[date.getUTCDay()]}**`);
     for (const group of day.groups) {
       lines.push(`${clean(group.name)}｜白班主值 ${names(group.white)} · 夜班主值 ${names(group.night)}`, `白班辅值：${group.auxiliary === null ? "无（周末/节假日）" : names(group.auxiliary)}`);
       if (group.offsite.length) lines.push(`${clean(snapshot.offsite)}${clean(group.offsiteRole)}：${group.offsite.map((p) => `${clean(p.name)}（${clean(p.slot)}）`).join("、")}`);

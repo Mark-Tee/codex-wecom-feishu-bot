@@ -40,3 +40,8 @@ test("decorative footer color changes do not block, role color changes do",async
  await readScheduleBroadcast({client,config,at:new Date("2026-11-02T00:20:00Z")});
  changeRole=true;await assert.rejects(()=>readScheduleBroadcast({client,config,at:new Date("2026-11-02T00:20:00Z")}),/岗位颜色变化/);
 });
+
+test("single date selection formats tomorrow as tomorrow, not today",async()=>{
+ const f=fixture("20261103");const client={getSheetInfo:async()=>({sheets:[{sheet_name:"202611",sheet_id:"test",row_count:2,col_count:9}]}),getCsv:async()=>({csv_data:f.rows.map(r=>r.join(",")).join("\n")}),getStyles:async()=>({cells:f.styles})};
+ const snapshot=await readScheduleBroadcast({client,config,at:new Date("2026-11-02T09:00:00Z"),offsets:[1]});assert.deepEqual(snapshot.days.map(d=>d.date),["20261103"]);assert.match(formatScheduleBroadcast(snapshot),/【次日排班】/);assert.match(formatScheduleBroadcast(snapshot),/明天 11\/03/);
+});
