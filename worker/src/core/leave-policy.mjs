@@ -11,13 +11,13 @@ export function checkRosterLeave(day, viewer, offsiteSite) {
     if(group.white?.includes(viewer))reasons.push(`${group.name}白班主值`);
     if(group.offsite?.some(item=>item.name===viewer && item.slot==="网络1"))reasons.push(`${offsiteSite || "异地"}网络1`);
   }
-  return {date:day.date,viewer,reasons:[...new Set(reasons)],restricted:reasons.length>0,uncertain:!reasons.length&&!person.shiftKind&&!person.leave&&!person.offsite};
+  return {date:day.date,viewer,reasons:[...new Set(reasons)],restricted:reasons.length>0,uncertain:!reasons.length&&!person.shiftKind&&!person.leave&&!person.offsite,restReason:person.leave?(person.restReason || person.roles?.find(role=>/^(?:调休|休假|休息|年假|事假|病假)$/.test(role)) || "已排休假或休息"):""};
 }
 
 export function leaveCheckSummary(result) {
   return result.restricted ? `不能请假或调休（${result.reasons.join("、")}）`
     : result.uncertain ? "待核对，原表有警告或班次未明确，不能据此判断可请假"
-      : "未命中本条限制，不代表请假已批准";
+      : result.restReason ? `${result.restReason}，不列为新的请假或调休候选日` : "未命中本条限制，不代表请假已批准";
 }
 
 export function leaveCheckDate(value, at) {
@@ -48,7 +48,7 @@ export function classifyLeaveCandidate(day,viewer,offsiteSite) {
   const result=checkRosterLeave(day,viewer,offsiteSite),person=day.people.find(item=>item.name===viewer);
   if(result.uncertain)return {date:day.date,kind:"pending",reason:result.uncertaintyReason || "班次未明确"};
   if(result.restricted)return {date:day.date,kind:"restricted",reason:result.reasons.join("、")};
-  if(person.leave)return {date:day.date,kind:"rest",reason:person.roles?.find(role=>/^(?:调休|休假|休息|年假|事假|病假)$/.test(role)) || "已排休假或休息"};
+  if(person.leave)return {date:day.date,kind:"rest",reason:result.restReason};
   if(person.shiftKind!=="white")return {date:day.date,kind:"pending",reason:"未明确排白班，不能列为候选"};
   return {date:day.date,kind:"candidate",reason:"原排白班且未命中三项限制"};
 }

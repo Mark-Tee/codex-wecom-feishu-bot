@@ -62,6 +62,10 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     return {name: group.name, white, night, auxiliary: auxiliary.allowed ? aux : null, offsite, offsiteRole: group.offsite_role, standby};
   });
   for (const name of [...power.white, ...power.night]) if (offsiteNames.has(name)) throw new Error("动力与异地岗位冲突");
+  const calendarDate = new Date(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T00:00:00Z`);
+  const previousDate = dateKey(addDays(calendarDate,-1));
+  const previousRows = rows.slice(1).filter(item=>String(item[headers.indexOf("日期")] || "").trim()===previousDate);
+  const previous = previousRows.length===1 ? previousRows[0] : null;
   const people = departments.flatMap((department) => department.members.map((name) => {
     const group = groups.find((item) => item.name === department.name);
     const raw = String(row[headers.indexOf(name)] || "").trim();
@@ -77,11 +81,14 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     const homeRole = roles.length > 0 && !offsite;
     if (power.white.includes(name)) roles.push("动力白班");
     if (power.night.includes(name)) roles.push("动力夜班");
-    const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw);
-    if (leave) roles.push(raw);
+    const blankRest = !raw && !roles.length;
+    const afterNight = previous && (String(previous[headers.indexOf(name)] || "").trim()===config.schedule.primary_night_value || rosterNames(previous[headers.indexOf("动力夜班值班人员")]).includes(name));
+    const restReason = blankRest ? afterNight ? "下夜班休息（按前日夜班及空白排班）" : [0,6].includes(calendarDate.getUTCDay()) ? "周末休息（原表空白，按排班规则）" : "休息（原表空白，按排班规则）" : "";
+    const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw) || blankRest;
+    if (leave) roles.push(restReason || raw);
     if (!roles.length) roles.push(raw ? `${raw}（岗位待核对）` : "原表空白，需结合前夜排班核对");
     const shiftKind=raw===config.schedule.primary_white_value ? "white" : raw===config.schedule.primary_night_value ? "night" : "";
-    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave, shiftKind, offsite:Boolean(offsite)};
+    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave, restReason, shiftKind, offsite:Boolean(offsite)};
   }));
   return {date, groups, power, warnings, people};
 }

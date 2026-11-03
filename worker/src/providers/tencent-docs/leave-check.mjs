@@ -12,7 +12,7 @@ export async function readLeaveCheck({client,config,at,viewer,date}) {
     "日期按排班表当天行，夜班归开班日。只检查岗位限制，不办理或批准请假，不改排班。",
     result.restricted ? "下一步：该日期命中限制，不要按可请假或调休安排；需调整时先联系排班负责人核对。"
       : result.uncertain ? "下一步：联系排班负责人核对当日班次；排班明确后重新检查。"
-        : "下一步：如需请假或调休，另行办理；本结果不代表已获批准。",
+        : result.restReason ? "下一步：该日已按排班规则归为休息，不需要把它作为新的请假或调休日期；若安排有变化请联系排班负责人。" : "下一步：如需请假或调休，另行办理；本结果不代表已获批准。",
     `在线排班读取：${new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai",dateStyle:"short",timeStyle:"short"}).format(new Date(snapshot.fetchedAt))}`,
   ].join("\n");
 }

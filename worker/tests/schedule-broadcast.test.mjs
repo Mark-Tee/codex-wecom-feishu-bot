@@ -34,6 +34,21 @@ test("weekends including makeup, holidays, and nights have no auxiliary",()=>{
  for(const minutes of [509,1050]) assert.equal(auxiliaryPolicy({date:"20261102",minutes}).allowed,false);
  assert.equal(auxiliaryPolicy({date:"20261102",minutes:510}).allowed,true);
 });
+
+test("blank unassigned days are rest, with verified post-night and weekend labels",()=>{
+ const f=fixture("20261104");f.rows[1][6]="";
+ let day=summarizeSchedule(f),person=day.people.find(p=>p.name==="丁");
+ assert.equal(person.leave,true);assert.equal(person.restReason,"休息（原表空白，按排班规则）");assert.equal(person.site,"");
+ const previous=["20261103","甲","乙","白班","夜班","白班","夜班","",""];
+ f.rows.push(previous);day=summarizeSchedule(f);assert.match(day.people.find(p=>p.name==="丁").restReason,/下夜班休息/);
+ previous[6]="白班";previous[2]="丁";assert.match(summarizeSchedule(f).people.find(p=>p.name==="丁").restReason,/下夜班休息/);
+ f.rows[1][0]=f.date="20261107";previous[0]="20261106";previous[2]="乙";
+ assert.match(summarizeSchedule(f).people.find(p=>p.name==="丁").restReason,/周末休息/);
+ previous[6]="夜班";assert.match(summarizeSchedule(f).people.find(p=>p.name==="丁").restReason,/下夜班休息/);
+ f.rows[1][0]=f.date="20261201";assert.match(summarizeSchedule(f).people.find(p=>p.name==="丁").restReason,/休息（原表空白/);
+ f.rows[1][8]="丁";person=summarizeSchedule(f).people.find(p=>p.name==="丁");assert.equal(person.leave,false);assert.equal(person.restReason,"");assert.equal(person.site,"OFFSITE_SITE");
+ f.rows[1][8]="";f.rows[1][1]="丁";person=summarizeSchedule(f).people.find(p=>p.name==="丁");assert.equal(person.leave,false);assert.deepEqual(person.roles,["动力白班"]);
+});
 test("work-order classification blocks auxiliary outside eligible shifts",()=>{
  for (const [date,minutes] of [["20261107",600],["20261102",1050]]) {
   const f=fixture(date);const role=classifyRole({row:f.rows[1],headers:f.rows[0],styles:f.styles,config:{...config,operator_name:"丙"},minutes});

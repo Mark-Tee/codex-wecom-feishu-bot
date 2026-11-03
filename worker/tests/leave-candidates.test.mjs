@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {leaveCandidateRange,classifyLeaveCandidate} from "../src/core/leave-policy.mjs";
-import {readLeaveCandidates} from "../src/providers/tencent-docs/leave-check.mjs";
+import {readLeaveCandidates,readLeaveCheck} from "../src/providers/tencent-docs/leave-check.mjs";
 import {parseCsv,toCsv} from "../src/core/draft-merge.mjs";
 import {buildDutyContext} from "../src/providers/tencent-docs/duty-context.mjs";
 
@@ -31,9 +31,9 @@ test("CSV empty-row preservation is opt-in and keeps quoted cell newlines",()=>{
 });
 test("one month uses five reads, isolates individual bad days and preserves physical color rows",async()=>{
  const f=fixture(),result=await readLeaveCandidates({...f,at:new Date("2026-11-03T09:00:00+08:00"),viewer:"丁",month:"2026-11"});
- assert.equal(f.reads(),5);assert.equal(result.entries.length,30);assert.deepEqual(result.counts,{candidate:21,rest:2,restricted:3,pending:4});
+ assert.equal(f.reads(),5);assert.equal(result.entries.length,30);assert.deepEqual(result.counts,{candidate:21,rest:3,restricted:3,pending:3});
  const kind=d=>result.entries.find(e=>e.date===`202611${String(d).padStart(2,"0")}`).kind;
- for(const d of [2,3,6])assert.equal(kind(d),"restricted");for(const d of [4,11])assert.equal(kind(d),"rest");for(const d of [5,8,9,10])assert.equal(kind(d),"pending");assert.equal(kind(7),"candidate");
+ for(const d of [2,3,6])assert.equal(kind(d),"restricted");for(const d of [4,5,11])assert.equal(kind(d),"rest");for(const d of [8,9,10])assert.equal(kind(d),"pending");assert.equal(kind(7),"candidate");
  assert.match(result.text,/可考虑的工作日：21天/);assert.match(result.text,/不代表已批准/);assert.match(result.text,/过去日期仅作排班回看/);assert.equal(Object.values(result.counts).reduce((a,b)=>a+b),30);
 });
 test("invalid month is rejected before network and missing published month is never replaced by old data",async()=>{
@@ -43,6 +43,11 @@ test("invalid month is rejected before network and missing published month is ne
 test("candidate classification requires explicit white duty and never counts existing rest",()=>{
  const day={date:"20261104",warnings:[],power:{white:[],night:[]},groups:[{white:[],offsite:[]}],people:[{name:"甲",shiftKind:"",offsite:true,leave:false}]};
  assert.equal(classifyLeaveCandidate(day,"甲","外站").kind,"pending");day.people[0].shiftKind="white";assert.equal(classifyLeaveCandidate(day,"甲","外站").kind,"candidate");day.people[0].leave=true;assert.equal(classifyLeaveCandidate(day,"甲","外站").kind,"rest");
+});
+
+test("daily leave reply recognizes blank rest and gives the matching next step",async()=>{
+ const f=fixture(),text=await readLeaveCheck({...f,at:new Date("2026-11-03T09:00:00+08:00"),viewer:"丁",date:"2026-11-05"});
+ assert.match(text,/休息（原表空白，按排班规则）/);assert.match(text,/不需要把它作为新的请假或调休日期/);assert.doesNotMatch(text,/结果：待核对/);assert.equal(f.reads(),5);
 });
 
 test("the same blank-row color mapping is preserved in ordinary work-order roster context",async()=>{
