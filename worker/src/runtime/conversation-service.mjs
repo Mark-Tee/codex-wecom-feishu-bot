@@ -104,6 +104,9 @@ export class ConversationService {
       return;
     }
 
+    if(/^\/forget(?:\s|$)/i.test(text)){
+      await responder.replyText(this.#forgetTasks(message.sessionId,text));return;
+    }
     const savedTaskCommand = text.match(/^\/(fill|done)\s+#?(\d{1,8})$/i);
     if (savedTaskCommand && (!this.config.feishuBrowser?.writeApprovalFile || savedTaskCommand[1].toLowerCase() === "done")) {
       const savedTask = this.pendingTasks.find(savedTaskCommand[2], message.sessionId);
@@ -777,6 +780,40 @@ export class ConversationService {
     if (value == null) delete mapping[chatId];
     else mapping[chatId] = value;
     this.state.set(`__${kind}ByChat__`, mapping);
+  }
+
+  #forgetTasks(chatId,text) {
+    const command=text.match(/^\/forget\s+(#?\d{1,8}|all|confirm)$/i);
+    if(!command)return "用法：清10；清全部后按提示确认。仅停止本人当前会话追踪，不删除在线记录。";
+    const target=command[1].toLowerCase();
+    const tasks=this.pendingTasks.list(chatId,{limit:Infinity}).sort((a,b)=>Number(a.id)-Number(b.id));
+    if(this.currentTask?.message?.sessionId===chatId || this.queue.items.some(task=>task.message?.sessionId===chatId) || tasks.some(task=>task.status==="processing"))return "本会话有任务处理中或排队，本次未清除。结束后重发；不要重复提交。";
+    if(target!=="all" && target!=="confirm"){
+      const task=this.pendingTasks.find(target,chatId);
+      if(!task)return "本人当前会话没有这个短号，未清除。发送“单”查看。";
+      if(["completed","cancelled"].includes(task.status))return `短号${task.id}已结束，不再追踪；在线记录未改动。`;
+      this.pendingTasks.cancel(task.id,chatId);
+      this.#setChatValue("dutyThreads",chatId,null);
+      this.#setChatValue("forgetConfirm",chatId,null);
+      return `已停止追踪短号${task.id}，不再续跑；在线记录未改动。`;
+    }
+    const waiting=this.#getChatValue("pendingDuty",chatId);
+    const digest=crypto.createHash("sha256").update(JSON.stringify({tasks,waiting:waiting || null})).digest("hex");
+    if(target==="all"){
+      if(!tasks.length && !waiting)return "本人当前会话没有待办或待补充任务。";
+      const preview=[`将停止追踪本人当前会话${tasks.length}条待办：`,tasks.map(task=>task.id).join("、") || "无编号待办",waiting?"另有1条未编号待补充任务。":"","在线记录不删除。5分钟内回复“确认清全部”执行。"].filter(Boolean).join("\n");
+      if(Buffer.byteLength(preview,"utf8")>3000)return "待办较多，无法完整展示确认范围，未清除。请使用“清 短号”逐条处理。";
+      this.#setChatValue("forgetConfirm",chatId,{digest,expiresAt:Date.now()+300000});
+      return preview;
+    }
+    const pending=this.#getChatValue("forgetConfirm",chatId);
+    this.#setChatValue("forgetConfirm",chatId,null);
+    if(!pending || pending.expiresAt<Date.now())return "清除确认已失效或尚未预览，本次未清除。重新发送“清全部”。";
+    if(pending.digest!==digest)return "待办或待补充内容已变化，本次未清除。重新发送“清全部”核对范围。";
+    for(const task of tasks)this.pendingTasks.cancel(task.id,chatId);
+    this.#setChatValue("pendingDuty",chatId,null);
+    this.#setChatValue("dutyThreads",chatId,null);
+    return `已停止追踪${tasks.length}条待办${waiting?"及1条待补充任务":""}，不再续跑；在线记录未改动。`;
   }
 
   #cancelTask(chatId, id) {

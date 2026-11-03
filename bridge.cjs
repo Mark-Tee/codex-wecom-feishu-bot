@@ -34,7 +34,7 @@ const WSImpl = (() => {
 
 const ROOT = __dirname;
 const {readServiceProfile} = require("./lib/service-profile.cjs");
-const {ticketRoute,normalizeTicketCommand,TICKET_HELP} = require("./lib/ticket-policy.cjs");
+const {ticketRoute,normalizeTicketCommand,TICKET_HELP,ticketBusyReply} = require("./lib/ticket-policy.cjs");
 const DATA_ROOT = process.env.CODEX_FEISHU_DATA_DIR || path.join(ROOT, "data");
 const configArgumentIndex = process.argv.indexOf("--config");
 const CONFIG_PATH = configArgumentIndex >= 0
@@ -759,7 +759,7 @@ async function processDutyAgentTask({ frame, prompt, chatKey, userId, images = [
     await replyStream(
       frame,
       streamId,
-      "收到工单，正在识别字段并核对处理条件…",
+      /^\/forget(?:\s|$)/i.test(prompt) ? "正在检查本人本地任务…" : "收到工单，正在识别字段并核对处理条件…",
       false,
     ).catch(() => {});
     const result = await runDutyAgent({
@@ -1219,6 +1219,8 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
 
   if (serviceProfile.role === "ticket") {
     const route = ticketDecision;
+    const busyReply=ticketBusyReply(prompt,jobRunning);
+    if(busyReply){await replyText(frame,busyReply);return;}
     if (route === "roster") { await replyText(frame, "这是工单机器人，排班查询请@排班机器人。"); return; }
     if (route === "help" || /^(?:\/help(?:\s|$)|帮助$)/i.test(prompt)) { await replyText(frame, TICKET_HELP); return; }
   }

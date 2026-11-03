@@ -2,6 +2,15 @@ const test=require("node:test"),assert=require("node:assert/strict"),fs=require(
 const {readServiceProfile}=require("../lib/service-profile.cjs");
 const {ticketRoute,normalizeTicketCommand}=require("../lib/ticket-policy.cjs");
 
+test("own-task clear has strict short commands, busy rejection and no management bypass",()=>{
+ const {ticketBusyReply}=require("../lib/ticket-policy.cjs");
+ for(const [input,expected] of Object.entries({"清10":"/forget 10","清 10":"/forget 10","清全部":"/forget all","确认清全部":"/forget confirm"})){
+  const prompt=normalizeTicketCommand('BOT '+input);assert.equal(prompt,expected);assert.equal(ticketRoute(prompt),'worker');assert.match(ticketBusyReply(prompt,true),/本次未清除/);assert.equal(ticketBusyReply(prompt,false),'');
+ }
+ for(const text of ['清除所有人的任务','清10并删除飞书记录','清123456789'])assert.equal(normalizeTicketCommand(text),text);
+ assert.equal(ticketRoute('/cancel 10'),'denied');assert.equal(ticketRoute('清空队列'),'denied');assert.equal(ticketBusyReply('/done 10',true),'');
+});
+
 test("short ticket commands normalize through the real roster-first gateway without crossing bots",()=>{
  const {normalizeRosterCommand}=require("../lib/roster-command.cjs");
  const aliases={"单":"/pending","填12":"/fill 12","填 12":"/fill 12","完12":"/done 12","人 测试甲":"/as 测试甲","补 09:00":"补充 09:00","菜单":"/help","状态":"/status"};
