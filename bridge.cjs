@@ -1174,6 +1174,9 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     prompt = `【OCR 识别文字】\n${ocrText.slice(0, 4000)}\n\n【用户问题】\n${prompt}`;
   }
   if (!prompt || (images.length === 0 && isMenuPrompt(originalPrompt))) {
+    if (serviceProfile.role === "ticket" && body.chattype === "single" && (cfg.allowUsers.length ? cfg.allowUsers.includes(userId) : (state.__operators || []).includes(userId))) {
+      await processDutyAgentTask({frame,prompt:"首页",chatKey:JSON.stringify(["ticket",body.chatid || userId,userId]),userId,images:[]}); return;
+    }
     await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP).catch((e) => log("reply fail", e.message));
     return;
   }

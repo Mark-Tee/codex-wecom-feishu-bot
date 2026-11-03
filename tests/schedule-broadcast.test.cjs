@@ -79,3 +79,11 @@ test("identity aliases and date queries remain isolated across groups and surviv
  await c.command(frame("a","u"),"我今天什么班");await c.command(frame("b","u"),"我明天什么班");await c.command(frame("a","v"),"查看排班");
  assert.deepEqual(selections,[{viewer:"测试甲",offsets:[0]},{viewer:"测试乙",offsets:[1]},{viewer:""}]);
 });
+
+test("private roster confirms own identity and never inherits group identity silently",async()=>{
+ const views=[];const f=fixture({members:async()=>["测试甲"],read:async(_,v)=>{views.push(v);return "fresh";}});
+ const g={body:{chattype:"group",chatid:"g",from:{userid:"u"}}},p={body:{chattype:"single",from:{userid:"u"}}};
+ await f.c.command(g,"排班身份 测试甲");await f.c.command(p,"查看排班");assert.equal(views.length,0);assert.match(f.replies.at(-1),/沿用/);
+ await f.c.command(p,"是");await f.c.command(p,"我明天什么班");assert.deepEqual(views,[{viewer:"测试甲",offsets:[1]}]);
+ await f.c.command(p,"绑定排班群");assert.equal(f.state.__scheduleGroup.chatid,"test-group");
+});

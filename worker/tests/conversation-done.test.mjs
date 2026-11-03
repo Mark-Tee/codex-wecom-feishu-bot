@@ -422,3 +422,13 @@ test("same-group other member cannot fill or list a legacy owned task",async()=>
  assert.equal(fills,0);assert.match(c.replies.at(-1).text,/没有找到/);
  assert.equal(pendingTasks.list(JSON.stringify(["wecom","chat-a","u2"])).length,0);
 });
+
+test("private homepage confirms unique same-account identity without importing group tasks",async()=>{
+ const {service,state,pendingTasks}=createService();const c=responseCollector();
+ pendingTasks.create({chatId:"chat-a",userId:"u1",operator:"测试甲"});
+ const m={...message("首页","private-u1"),chatType:"single"};
+ await service.handle(m,c.responder);assert.match(c.replies.at(-1).text,/沿用/);
+ await service.handle({...m,text:"是"},c.responder);
+ await service.handle(m,c.responder);assert.match(c.replies.at(-1).text,/使用人：测试甲/);assert.doesNotMatch(c.replies.at(-1).text,/短号.*1/);
+ assert.equal(pendingTasks.list(JSON.stringify(["wecom","private-u1","u1"])).length,0);
+});

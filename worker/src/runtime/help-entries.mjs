@@ -1,4 +1,5 @@
 export const HELP_ENTRIES = Object.freeze([
+ {trigger:"首页 / 我的工单 / 还有哪些没处理",parameters:"",description:"私聊查看本人身份和待办。",example:"首页",limits:"群聊与私聊任务独立；唯一姓名可确认沿用，冲突用/as确认；不自动提交或开启提醒。"},
  {trigger:"补充",parameters:"内容",description:"接着回答本人待确认工单的问题。",example:"补充 进入时间为09:00",limits:"仅当前群本人待确认任务，超时须重新发工单；不会引用他人上下文。"},
  {trigger:"继续",parameters:"",description:"查看本人待补充信息或待办，按短号选择后操作。",example:"继续",limits:"按机器人、群、账号隔离并持久保存；不会自动重新提交。"},
  {trigger:"/as",parameters:"姓名",description:"设置本会话工单使用人。",example:"/as 测试甲",limits:"换为本人准确姓名，需匹配配置成员。"},

@@ -111,6 +111,16 @@ export class ConversationService {
       at: message.receivedAt,
     });
 
+    const privateHome = message.chatType === "single" && ["/help", "帮助", "首页", "我的工单", "还有哪些没处理"].includes(text);
+    if (privateHome) {
+      const operator = this.#getChatValue("operator", message.sessionId);
+      const names = [...new Set(Object.entries(this.state.get("__operatorByChat__", {})).filter(([key])=>{try{const parts=JSON.parse(key);return parts[0]===(message.platform||"wecom") && parts[2]===message.userId;}catch{return false;}}).map(([,name])=>name))];
+      if (!operator && names.length===1 && this.dutyConfig.line.team_members.includes(names[0])) {
+        this.#setChatValue("operatorConfirm", message.sessionId, {name:names[0],expiresAt:Date.now()+300000});
+        await responder.replyText(`沿用你已确认的姓名“${names[0]}”？回复“是”确认，或 /as 本人姓名更正。群聊任务不会带入。`); return;
+      }
+      await responder.replyText(`【我的工单】\n使用人：${operator || "未绑定，请发送 /as 本人姓名"}\n\n${formatPendingTasks(this.pendingTasks.list(message.sessionId))}\n\n继续：查看待确认问题\n补充 内容：回答问题\n/pending：待办短号\n/help：使用说明\n群聊与私聊任务独立。`); return;
+    }
     if (text === "/help" || text === "帮助") {
       await responder.replyText(this.#helpText());
       return;
