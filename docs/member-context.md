@@ -18,3 +18,6 @@
 
 ## Worker deployment acceptance
 A source test pass does not verify the deployed worker directory. After deploying worker files, run the actual configured worker entry with a synthetic `/help` message from an isolated temporary working directory. Verify the returned JSON contains help text, not merely exit code zero. This exercises static imports without model calls, browser actions, or online table writes; keep its state outside the production working directory. Include the field-discovery module and its dependencies when deploying the browser filler. Remote failures return a concise cause and reference; detailed diagnostics remain in local logs.
+
+## Date input compatibility
+The calendar/time input CSS build hash changed in the hosted UI. Match the stable `__calendar-picker-input` and `__time-picker-input` class fragments inside the already-scoped field rather than a full generated class. Regression covers old and current hashes. The controlled end-to-end exercise required manual date selection and readback; it is not unattended automatic acceptance. Tencent writes in that exercise used an isolated append-only harness with full-row blank checks, before/after cell and style verification. The legacy default draft replacement route has not been converted to append-only and must not be used against shared sheets.

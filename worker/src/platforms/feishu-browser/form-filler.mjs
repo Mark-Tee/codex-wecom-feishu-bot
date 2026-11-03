@@ -290,7 +290,7 @@ export class FeishuBrowserFormFiller {
     const [year, month, day] = parsed.date.split("/").map(Number);
     const datePoint = await session.evaluate(fieldElementPointScript(
       selector,
-      ".bitable-f9ce0c__calendar-picker-input",
+      "[class*=__calendar-picker-input]",
     ));
     if (!datePoint) throw new Error("找不到日期输入框");
     await session.click(datePoint.x, datePoint.y);
@@ -337,7 +337,7 @@ export class FeishuBrowserFormFiller {
     await this.#pickDate(session, selector, parsed);
     const timePoint = await session.evaluate(fieldElementPointScript(
       selector,
-      ".bitable-f9ce0c__time-picker-input",
+      "[class*=__time-picker-input]",
     ));
     if (!timePoint) throw new Error("找不到时间输入框");
     await session.click(timePoint.x, timePoint.y);
@@ -356,7 +356,7 @@ export class FeishuBrowserFormFiller {
     ) {
       const datePoint = await session.evaluate(fieldElementPointScript(
         selector,
-        ".bitable-f9ce0c__calendar-picker-input",
+        "[class*=__calendar-picker-input]",
       ));
       if (!datePoint) throw new Error("找不到日期输入框");
       await session.click(datePoint.x, datePoint.y);

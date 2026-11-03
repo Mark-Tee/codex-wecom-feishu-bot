@@ -224,8 +224,8 @@ export function dateTimeInputValuesScript(selector) {
   return `(() => {
     const root = document.querySelector(${JSON.stringify(selector)});
     if (!root) return null;
-    const date = root.querySelector('.bitable-f9ce0c__calendar-picker-input');
-    const time = root.querySelector('.bitable-f9ce0c__time-picker-input');
+    const date = root.querySelector('[class*=__calendar-picker-input]');
+    const time = root.querySelector('[class*=__time-picker-input]');
     return { date: date?.value || '', time: time?.value || '' };
   })()`;
 }
