@@ -42,8 +42,21 @@ export function validateRoomTicketNo(value) {
 }
 
 export function validateDutyIdentifiers(fillCard = {}) {
+  if (isRackOrder(fillCard)) {
+    const value = String(fillCard.transactionNo ?? "").trim();
+    const match = value.match(/^SXJXQ(\d{8})(\d+)$/);
+    const businessError = !value || value === "无" ? ""
+      : match && validDatePart(match[1]) ? ""
+      : "上下架申请单号需按原文核验（SXJXQ、有效日期及原序号），不能补零、改前缀或虚构SJSW事务单号";
+    return [businessError, validateRoomTicketNo(fillCard.roomTicketNo)].filter(Boolean);
+  }
   return [
     validateTransactionNo(fillCard.transactionNo),
     validateRoomTicketNo(fillCard.roomTicketNo),
   ].filter(Boolean);
+}
+
+export function isRackOrder(card = {}) {
+  return String(card.source || "").trim() === "上下架"
+    || /^SXJXQ/.test(String(card.transactionNo || "").trim());
 }
