@@ -3,6 +3,7 @@ import { rosterNames } from "../../core/roster-names.mjs";
 import { auxiliaryPolicy } from "../../core/auxiliary-policy.mjs";
 import { colorMatches } from "../../core/duty-role.mjs";
 import { addDays, dateKey, shanghaiDate, sheetForDate } from "../../core/duty-date.mjs";
+import {checkRosterLeave,leaveCheckSummary} from "../../core/leave-policy.mjs";
 
 function column(n) {
   let result = "";
@@ -145,6 +146,7 @@ export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
         lines.push(`${label}：${clean(own.site)}`);
         for (const role of own.roles) lines.push(clean(role));
       } else lines.push(`${label}：${names(own.roles)}`);
+      if(own && day.groups && day.power)lines.push(`请假/调休：${leaveCheckSummary(checkRosterLeave(day,viewer,snapshot.offsite))}`);
     });
   } else if (viewer) lines.push("", "个人身份不在本次排班名单中，以下按全员视角展示，请核对排班身份。");
   snapshot.days.forEach((day, i) => {

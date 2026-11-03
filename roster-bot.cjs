@@ -36,6 +36,11 @@ const controller=createScheduleBroadcast({state,save,reply,send:(chatid,chatType
   const client=new TencentDocsClient();
   const readOnly=Object.freeze({getSheetInfo:client.getSheetInfo.bind(client),getCsv:client.getCsv.bind(client),getStyles:client.getStyles.bind(client)});
   return formatScheduleBroadcast(await readScheduleBroadcast({client:readOnly,config:business(),at,...selection}),{viewer:selection.viewer||""});
+},readLeave:async(at,selection)=>{
+  const {TencentDocsClient}=await load("src/providers/tencent-docs/client.mjs");
+  const {readLeaveCheck}=await load("src/providers/tencent-docs/leave-check.mjs");
+  const client=new TencentDocsClient();
+  return readLeaveCheck({client:Object.freeze({getSheetInfo:client.getSheetInfo.bind(client),getCsv:client.getCsv.bind(client),getStyles:client.getStyles.bind(client)}),config:business(),at,...selection});
 }});
 const handoffSettings=config.roster.powerHandoff;
 async function handoffSchedule(at) {

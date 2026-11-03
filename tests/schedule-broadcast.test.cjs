@@ -87,3 +87,13 @@ test("private roster confirms own identity and never inherits group identity sil
  await f.c.command(p,"是");await f.c.command(p,"我明天什么班");assert.deepEqual(views,[{viewer:"测试甲",offsets:[1]}]);
  await f.c.command(p,"绑定排班群");assert.equal(f.state.__scheduleGroup.chatid,"test-group");
 });
+
+test("leave check uses bound sender only, supports explicit dates and refuses malformed arguments",async()=>{
+ const checks=[];const f=fixture({members:async()=>["测试甲"],readLeave:async(_,selection)=>{checks.push(selection);return "未命中本条限制，不代表请假已批准";}});
+ const a={body:{chattype:"group",chatid:"test-group",from:{userid:"a"}}},b={body:{chattype:"group",chatid:"test-group",from:{userid:"b"}}};
+ await f.c.command(a,"排班身份 测试甲");await f.c.command(a,"BOT 请假检查 明天");await f.c.command(a,"调休检查 2026-11-04");await f.c.command(a,"请假检查");
+ assert.deepEqual(checks,[{viewer:"测试甲",date:"明天"},{viewer:"测试甲",date:"2026-11-04"},{viewer:"测试甲",date:"今天"}]);
+ await f.c.command(b,"请假检查 明天");assert.match(f.replies.at(-1),/尚未绑定/);assert.equal(checks.length,3);
+ await f.c.command(a,"请假检查 测试乙 明天");assert.match(f.replies.at(-1),/用法/);assert.equal(checks.length,3);
+ assert.equal(f.sent.length,0);
+});
