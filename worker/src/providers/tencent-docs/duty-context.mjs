@@ -85,7 +85,7 @@ export async function buildDutyContext({
     scheduleSheet.sheet_id,
     rowRange(scheduleSheet.row_count, scheduleSheet.col_count),
   );
-  const scheduleRows = parseCsv(scheduleRowsCsv.csv_data || "");
+  const scheduleRows = parseCsv(scheduleRowsCsv.csv_data || "", {preserveEmptyRows:true});
   const headers = scheduleRows[0] || [];
   const dataRows = scheduleRows.slice(1);
   const allStyles = await client.getStyles(

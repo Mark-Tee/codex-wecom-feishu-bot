@@ -1,4 +1,4 @@
-export function parseCsv(text) {
+export function parseCsv(text, {preserveEmptyRows = false} = {}) {
   const rows = [];
   let row = [];
   let field = "";
@@ -16,14 +16,14 @@ export function parseCsv(text) {
     } else if ((char === "\n" || char === "\r") && !quoted) {
       if (char === "\r" && text[index + 1] === "\n") index += 1;
       row.push(field);
-      if (row.some((value) => value !== "")) rows.push(row);
+      if (preserveEmptyRows || row.some((value) => value !== "")) rows.push(row);
       row = [];
       field = "";
     } else field += char;
   }
   if (field || row.length) {
     row.push(field);
-    if (row.some((value) => value !== "")) rows.push(row);
+    if (preserveEmptyRows || row.some((value) => value !== "")) rows.push(row);
   }
   return rows;
 }

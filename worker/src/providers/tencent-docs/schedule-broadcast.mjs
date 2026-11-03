@@ -86,6 +86,25 @@ export function summarizeSchedule({ rows, styles, date, config }) {
   return {date, groups, power, warnings, people};
 }
 
+export async function readScheduleSheet({client,config,source,sheet,dates}) {
+  if (!sheet || !Number.isSafeInteger(Number(sheet.row_count)) || Number(sheet.row_count)<1 || !Number.isSafeInteger(Number(sheet.col_count)) || Number(sheet.col_count)<1)throw Error("排班工作表缺失或大小无效");
+  const range=`A1:${column(Number(sheet.col_count))}${sheet.row_count}`;
+  const csv=await client.getCsv(source,sheet.sheet_id,range);
+  if(typeof csv.csv_data!=="string")throw Error("实时排班读取失败，不使用缓存");
+  const styleResult=await client.getStyles(source,sheet.sheet_id,range);
+  if(!Array.isArray(styleResult.cells)||!styleResult.cells.length)throw Error("排班颜色读取失败");
+  const confirm=await client.getCsv(source,sheet.sheet_id,range);
+  if(confirm.csv_data!==csv.csv_data)throw Error("读取期间排班发生变化，下次重新核验");
+  const confirmStyles=await client.getStyles(source,sheet.sheet_id,range);
+  const rows=parseCsv(csv.csv_data,{preserveEmptyRows:true}),dateColumn=rows[0]?.indexOf("日期")??-1;
+  if(dateColumn<0)throw Error("排班表缺少日期列");
+  const wanted=new Set(dates),relevantRows=new Set(rows.map((row,index)=>wanted.has(String(row[dateColumn]).trim())?index:-1));
+  const relevantColumns=new Set([dateColumn,...config.site_rules.departments.flatMap(group=>group.members.map(name=>rows[0].indexOf(name)))]);
+  const fingerprint=cells=>JSON.stringify(cells.filter(cell=>relevantRows.has(cell.row)&&relevantColumns.has(cell.col)).map(({row,col,background_color})=>[row,col,background_color||""]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]));
+  if(!Array.isArray(confirmStyles.cells)||fingerprint(confirmStyles.cells)!==fingerprint(styleResult.cells))throw Error("读取期间岗位颜色变化，下次重新核验");
+  return {rows,styles:styleResult.cells};
+}
+
 export async function readScheduleBroadcast({ client, config, at = new Date(), offsets = [0, 1] }) {
   if (config.sources?.mode !== "online") throw new Error("排班播报仅支持在线表");
   const source = config.sources.online.schedule;
@@ -98,23 +117,7 @@ export async function readScheduleBroadcast({ client, config, at = new Date(), o
     const sheetName = sheetForDate(date, config.schedule.sheet_format);
     if (!cache.has(sheetName)) {
       const sheet = info.sheets.find((s) => s.sheet_name === sheetName);
-      if (!sheet || !Number.isSafeInteger(Number(sheet.row_count)) || Number(sheet.row_count) < 1 || !Number.isSafeInteger(Number(sheet.col_count)) || Number(sheet.col_count) < 1) throw new Error(`排班工作表缺失或大小无效：${sheetName}`);
-      const range = `A1:${column(Number(sheet.col_count))}${sheet.row_count}`;
-      const csv = await client.getCsv(source, sheet.sheet_id, range);
-      if (typeof csv.csv_data !== "string") throw new Error("实时排班读取失败，不使用缓存");
-      const styleResult = await client.getStyles(source, sheet.sheet_id, range);
-      if (!Array.isArray(styleResult.cells) || !styleResult.cells.length) throw new Error("排班颜色读取失败");
-      const confirm = await client.getCsv(source, sheet.sheet_id, range);
-      if (confirm.csv_data !== csv.csv_data) throw new Error("读取期间排班发生变化，下次重新核验");
-      const confirmStyles = await client.getStyles(source, sheet.sheet_id, range);
-      const parsedRows = parseCsv(csv.csv_data);
-      const relevantDates = new Set(offsets.map((value) => dateKey(addDays(today, value))));
-      const dateColumn = parsedRows[0].indexOf("日期");
-      const relevantRows = new Set(parsedRows.map((row,index) => relevantDates.has(String(row[dateColumn]).trim()) ? index : -1));
-      const relevantColumns = new Set([dateColumn, ...config.site_rules.departments.flatMap((group) => group.members.map((name) => parsedRows[0].indexOf(name)))]);
-      const fingerprint = (cells) => JSON.stringify(cells.filter((cell) => relevantRows.has(cell.row) && relevantColumns.has(cell.col)).map(({row,col,background_color}) => [row,col,background_color || ""]).sort((a,b) => a[0]-b[0] || a[1]-b[1]));
-      if (!Array.isArray(confirmStyles.cells) || fingerprint(confirmStyles.cells) !== fingerprint(styleResult.cells)) throw new Error("读取期间岗位颜色变化，下次重新核验");
-      cache.set(sheetName, {rows: parsedRows, styles: styleResult.cells});
+      cache.set(sheetName,await readScheduleSheet({client,config,source,sheet,dates:offsets.map(value=>dateKey(addDays(today,value)))}));
     }
     days.push({...summarizeSchedule({...cache.get(sheetName), date: dateKey(date), config}), label:offset === 0 ? "今天" : "明天"});
   }

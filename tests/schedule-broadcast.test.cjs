@@ -97,3 +97,12 @@ test("leave check uses bound sender only, supports explicit dates and refuses ma
  await f.c.command(a,"请假检查 测试乙 明天");assert.match(f.replies.at(-1),/用法/);assert.equal(checks.length,3);
  assert.equal(f.sent.length,0);
 });
+
+test("monthly candidate questions keep each sender and group identity isolated",async()=>{
+ const calls=[];const f=fixture({members:async()=>["测试甲","测试乙"],readCandidates:async(_,selection)=>{calls.push(selection);return "本月候选日";}});
+ const frame=(chatid,user)=>({body:{chattype:"group",chatid,from:{userid:user}}});
+ await f.c.command(frame("a","u"),"排班身份 测试甲");await f.c.command(frame("b","u"),"排班身份 测试乙");
+ await f.c.command(frame("a","u"),"我哪几天可以用来请假调休");await f.c.command(frame("b","u"),"调休候选 2026-12");
+ assert.deepEqual(calls,[{viewer:"测试甲",month:"本月"},{viewer:"测试乙",month:"2026-12"}]);
+ await f.c.command(frame("a","other"),"请假候选");assert.match(f.replies.at(-1),/尚未绑定/);await f.c.command(frame("a","u"),"请假候选 测试乙");assert.match(f.replies.at(-1),/用法/);assert.equal(calls.length,2);assert.equal(f.sent.length,0);
+});

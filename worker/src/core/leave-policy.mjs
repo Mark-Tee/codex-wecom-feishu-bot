@@ -29,3 +29,26 @@ export function leaveCheckDate(value, at) {
   if(!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10)!==value)throw Error("日期不存在");
   return {date:value,offset:(date.getTime()-today.getTime())/86400000};
 }
+
+export function leaveCandidateRange(value, at) {
+  const today=shanghaiDate(at),current=today.toISOString().slice(0,7);
+  let month=value;
+  if(!month || month==="本月")month=current;
+  else if(month==="下月")month=new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth()+1,1)).toISOString().slice(0,7);
+  if(!/^20\d{2}-\d{2}$/.test(month))throw Error("月份格式应为YYYY-MM");
+  const first=new Date(`${month}-01T00:00:00Z`);
+  if(!Number.isFinite(first.getTime()) || first.toISOString().slice(0,7)!==month)throw Error("月份不存在");
+  const start=!value || value==="本月" ? today : first;
+  const end=new Date(Date.UTC(first.getUTCFullYear(),first.getUTCMonth()+1,0));
+  const dates=Array.from({length:(end-start)/86400000+1},(_,index)=>addDays(start,index).toISOString().slice(0,10).replaceAll("-",""));
+  return {month,start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10),dates,includesPast:start<today};
+}
+
+export function classifyLeaveCandidate(day,viewer,offsiteSite) {
+  const result=checkRosterLeave(day,viewer,offsiteSite),person=day.people.find(item=>item.name===viewer);
+  if(result.uncertain)return {date:day.date,kind:"pending",reason:result.uncertaintyReason || "班次未明确"};
+  if(result.restricted)return {date:day.date,kind:"restricted",reason:result.reasons.join("、")};
+  if(person.leave)return {date:day.date,kind:"rest",reason:person.roles?.find(role=>/^(?:调休|休假|休息|年假|事假|病假)$/.test(role)) || "已排休假或休息"};
+  if(person.shiftKind!=="white")return {date:day.date,kind:"pending",reason:"未明确排白班，不能列为候选"};
+  return {date:day.date,kind:"candidate",reason:"原排白班且未命中三项限制"};
+}

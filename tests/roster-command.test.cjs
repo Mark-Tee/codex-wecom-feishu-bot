@@ -17,3 +17,10 @@ test("ordinary text and discussion of roster commands are not reinterpreted",()=
  for(const text of ["BOT 今天要做什么","请解释 BOT 查看排班 的实现","BOT 查看排班并删除文件","其他BOT 查看排班"])
   assert.equal(normalizeRosterCommand(text),text);
 });
+
+test("natural leave planning questions map to month queries without a model",()=>{
+ for(const text of ["我哪几天可以用来请假调休","我这个月哪几天能调休？","BOT 我哪几天可以请假"]){assert.equal(normalizeRosterCommand(text),"请假候选 本月");}
+ assert.equal(normalizeRosterCommand("我下个月哪几天可以请假"),"请假候选 下月");
+ assert.equal(normalizeRosterCommand("BOT 调休候选 2026-11"),"调休候选 2026-11");
+ assert.equal(normalizeRosterCommand("请解释我哪几天可以调休的代码"),"请解释我哪几天可以调休的代码");
+});
