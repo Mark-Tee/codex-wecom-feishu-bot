@@ -46,19 +46,19 @@ export function inferFillCardFromSpec(spec = {}) {
   });
 }
 
-export function formatFillCard(task, { autoSubmit = false } = {}) {
+export function formatFillCard(task, { autoSubmit = false, instructions = true } = {}) {
   const card = normalizeFillCard(task.fillCard || {});
   const lines = [
     `**飞书填报卡 · ${task.id}**`,
-    autoSubmit
+    instructions ? autoSubmit
       ? "机器人会核对浏览器字段，核对通过后自动提交飞书。"
-      : "请对照原工单核对浏览器中的字段，并手工提交飞书。",
+      : "请对照原工单核对浏览器中的字段，并手工提交飞书。" : "",
   ];
   for (const [key, label] of FIELDS) {
     const optionalNumber = key === "transactionNo" && (isRackOrder(card) || isWiringOrder(card));
     const displayLabel = key === "transactionNo" && isRackOrder(card) ? "上下架申请单号（飞书事务单号列）" : label;
     lines.push(`${displayLabel}：${card[key] || (optionalNumber ? "未提供，按机房单号查重" : "未识别，请查看原图")}`);
   }
-  lines.push(`飞书提交后发送：\`/done ${task.id}\``);
-  return lines.join("\n");
+  if (instructions) lines.push(`飞书提交后发送：\`/done ${task.id}\``);
+  return lines.filter(Boolean).join("\n");
 }

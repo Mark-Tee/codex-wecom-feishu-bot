@@ -112,10 +112,13 @@ test("补充图片信息沿用原收单时间，不因跨班次回答重新判�
   const key=JSON.stringify(["wecom","chat-a","u1"]);
   const first="2026-10-26T17:20:00+08:00";
   state.set("__pendingDutyByChat__",{[key]:{userText:"工单",images:[{path:"dummy.jpg"}],ocrText:"",receivedAt:first,clarification:"缺字",expiresAt:Date.now()+60000}});
-  await service.handle({...message("补充 一个已确认的字"),receivedAt:"2026-10-26T17:40:00+08:00"},responseCollector().responder);
+  const collector=responseCollector();
+  await service.handle({...message("补充 一个已确认的字"),receivedAt:"2026-10-26T17:40:00+08:00"},collector.responder);
   await settle();await settle();
   assert(prompt.includes(first));assert(!prompt.includes("2026-10-26T17:40"));
   assert.equal(state.get("__pendingDutyByChat__")[key].receivedAt,first);
+  assert.match(collector.replies.at(-1).text,/尚未写表/);
+  assert.match(collector.replies.at(-1).text,/下一步：.*当前聊天回复“补充/);
 });
 
 function waitForReply(replies, phrase, timeoutMs = 1000) {
@@ -395,6 +398,28 @@ test("共享表测试的填写回执不再引导写腾讯草稿",async()=>{
  const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,requiresLocalReview:true,submitted:false,message:"需本机核准"})}});
  service.config.feishuBrowser.writeApprovalFile="local-permit";pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",draftSpec:validSpec(),currentDate:"20261026"});
  const c=responseCollector();await service.handle(message("/fill 1"),c.responder);await waitForReply(c.replies,"本次只测试飞书");assert.doesNotMatch(c.replies.at(-1).text,/提交飞书后发送/);
+});
+
+test("protected fill replies never append conflicting retry or done instructions", async () => {
+ for(const workflowMode of ["manual-feishu","power-duty","offsite-feishu","feishu-test"]) {
+  for(const result of [{awaitingWriteApproval:true,requiresLocalReview:true},{submitted:true,requiresReadback:true},{requiresLocalReview:true,message:"相同业务工单已在飞书存在，未新增。请核对原任务：任务甲"}]) {
+   const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,...result})}});
+   pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",workflowMode,powerDuty:{date:"20261026",kind:"白班"},siteAssignment:{slot:"网络1",site:"其他站点",assignmentType:"告警值班"},draftSpec:validSpec()});
+   const c=responseCollector();await service.handle(message("/fill 1"),c.responder);
+   const reply=await waitForReply(c.replies,"下一步：");
+   assert.match(reply.text,/暂时无需操作/);
+   assert.doesNotMatch(reply.text,/核对后.*\/fill 1|提交飞书后发送|发送 \/done 1/);
+  }
+ }
+});
+
+test("next action uses the current short ID after existing browser task-number reassignment", async () => {
+ const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,submitted:true,taskNumber:"WD20261026007"})}});
+ pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",draftSpec:validSpec()});
+ const c=responseCollector();await service.handle(message("/fill 1"),c.responder);
+ const reply=await waitForReply(c.replies,"下一步：");
+ assert.match(reply.text,/本地短号：7/);assert.match(reply.text,/发送 \/done 7/);
+ assert.doesNotMatch(reply.text,/发送 \/done 1/);
 });
 
 test("completed fill and cross-chat short ID make zero browser and model calls",async()=>{

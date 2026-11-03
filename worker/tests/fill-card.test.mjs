@@ -56,3 +56,9 @@ test("自动提交模式在填报卡中说明由机器人提交", () => {
   }, { autoSubmit: true });
   assert.match(text, /机器人会核对.*自动提交飞书/);
 });
+
+test("browser outcome owns next action without contradictory card instructions", () => {
+ const text=formatFillCard({id:"42",fillCard:{transactionNo:"SJSW001"}},{instructions:false});
+ assert.match(text,/事务单号：SJSW001/);
+ assert.doesNotMatch(text,/手工提交|\/done/);
+});
