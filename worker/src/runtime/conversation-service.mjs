@@ -472,8 +472,8 @@ export class ConversationService {
       });
       const text = [
         "**腾讯文档草稿已更新**",
-        `使用人 ${operator} · 周报新增 ${normalized.weeklyRows.length} 行 · 交接班新增 ${normalized.handoverRows.length} 行`,
-        `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
+        `使用人 ${operator} · 周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
+        "仅追加，重复内容跳过；已有草稿记录保留。",
         update.fileUrl,
       ].join("\n");
       await responder.replyProgress(streamId, text, true);
@@ -686,8 +686,8 @@ export class ConversationService {
       const text = [
         "**腾讯文档草稿已更新**",
         `本地短号 ${localTaskId} · 使用人 ${pending.operator}`,
-        `周报新增 ${spec.weeklyRows.length} 行 · 交接班新增 ${spec.handoverRows.length} 行`,
-        `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
+        `周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
+        "仅追加，重复内容跳过；已有草稿记录保留。",
         update.fileUrl,
       ].filter(Boolean).join("\n");
       await responder.replyProgress(streamId, text, true);
@@ -696,7 +696,7 @@ export class ConversationService {
       this.logger.error("确认飞书提交后更新腾讯草稿失败", error.message);
       await responder.replyProgress(
         streamId,
-        `**腾讯文档草稿未更新**\n\n本地短号 ${localTaskId} 已保留，可排查后再次发送 /done ${localTaskId}。\n错误：${error.message}`,
+        `**腾讯文档草稿未全部完成**\n\n本地短号 ${localTaskId} 已保留；先本机核验，确认可重试后发送 /done ${localTaskId}。\n错误：${error.message}`,
         true,
       );
     }

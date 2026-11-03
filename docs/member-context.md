@@ -21,3 +21,9 @@ A source test pass does not verify the deployed worker directory. After deployin
 
 ## Date input compatibility
 The calendar/time input CSS build hash changed in the hosted UI. Match the stable `__calendar-picker-input` and `__time-picker-input` class fragments inside the already-scoped field rather than a full generated class. Regression covers old and current hashes. The controlled end-to-end exercise required manual date selection and readback; it is not unattended automatic acceptance. Tencent writes in that exercise used an isolated append-only harness with full-row blank checks, before/after cell and style verification. The legacy default draft replacement route has not been converted to append-only and must not be used against shared sheets.
+
+### Draft append and saved-date verification
+
+Draft updates append after the last occupied row across all columns, including zero, false and formula cells. Existing rows and styles are not rewritten. Exact incoming business content is skipped on retry; handover work is appended as a separate row rather than merged into an existing shift row. A pending write audit blocks uncertain retries until reviewed locally. Local locking does not provide an atomic reservation against other online editors.
+
+Record submissions now read back the business identifiers, task number and saved entry timestamp. A missing or different timestamp stops the workflow and requires local review; it never recreates or edits the submitted record automatically. Menus retain the real-write acceptance caveat. Offline regression passed; a new unattended online acceptance run is still required.

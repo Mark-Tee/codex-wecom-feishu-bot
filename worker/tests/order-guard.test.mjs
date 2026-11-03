@@ -12,6 +12,13 @@ const url="https://example.feishu.cn/base/exampleBase?table=tableExample";
 const card={transactionNo:"SJSW20261102000123",roomTicketNo:"JF20261102000456",expectedEnterAt:"2026-11-02 10:00",specificWork:"测试事项"};
 const task={chatId:"chat-example",userId:"user-example",operator:"测试甲",receivedAt:"2026-11-02T10:01:00+08:00",workflowMode:"manual-feishu",fillCard:card};
 const ids={transactionNo:"fldTransactionExample",roomTicketNo:"fldRoomExample",taskList:"fldTaskExample"};
+test("snapshot carries actual saved date for the matching business order", () => fixture(async ({config}) => {
+ config.fieldIds = {...ids, expectedEnterAt: "fldDateExample"};
+ const record = {...row(), fldDateExample: {value: 1793656800000}};
+ const snapshot = await readOrderSnapshot(server([{recordMap: {recordExample: record}, tableRecordNum: 1}]), config, card);
+ assert.equal(snapshot.matchedRecords[0].expectedEnterAt, 1793656800000);
+ assert.equal(snapshot.matchedRecords[0].taskNumber, "WD20261102001");
+}));
 function fixture(run){const root=fs.mkdtempSync(path.join(os.tmpdir(),"order-guard-test-"));const config={enabled:true,entryMode:"record",orderDeduplication:true,formUrl:url,fieldIds:ids,taskListViewId:"viewExample",orderLedgerDir:root,diagnostics:{enabled:false}};return Promise.resolve().then(()=>run({root,config})).finally(()=>fs.rmSync(root,{recursive:true,force:true}));}
 function row(order=card,no="WD20261102001"){return {[ids.transactionNo]:{value:[{text:order.transactionNo||""}]},[ids.roomTicketNo]:{value:[{text:order.roomTicketNo||""}]},[ids.taskList]:{value:[{text:no}]}};}
 function server(pages){

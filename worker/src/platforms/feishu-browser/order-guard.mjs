@@ -13,7 +13,7 @@ export function explicitDuplicateTest(approval,task) {
 export async function readOrderSnapshot(session,config,card,prefix="") {
  const {origin,appToken,tableId}=parseBitableTarget(config.formUrl),ids=config.fieldIds||{},order=orderIdentifiers(card);
  if(!ids.transactionNo||!ids.roomTicketNo||!ids.taskList||!config.taskListViewId||(!order.transactionNo&&!order.roomTicketNo))throw review("飞书查重配置或业务单号不完整，未允许建单");
- const seen=new Set(),numbers=new Set(),matches=[];let expectedTotal=null,offset=0;const verifiedFields={transactionNo:false,roomTicketNo:false,taskList:false};
+ const seen=new Set(),numbers=new Set(),matches=[],matchedRecords=[];let expectedTotal=null,offset=0;const verifiedFields={transactionNo:false,roomTicketNo:false,taskList:false};
  for(let page=0;page<20;page++){
   let data;
   try{data=await session.evaluate(`/* READ_ONLY_ORDER_SNAPSHOT */ (async()=>{
@@ -26,22 +26,22 @@ export async function readOrderSnapshot(session,config,card,prefix="") {
    const clean=(${orderIdentifiers.toString()}),same=(${sameBusinessOrder.toString()});
    const plain=v=>v==null?'':Array.isArray(v)?v.map(plain).join(''):typeof v==='object'?plain(v.text??v.value??''):String(v);
    const records=Object.entries(decoded.recordMap||{}),ids=${JSON.stringify(ids)},wanted=${JSON.stringify(order)};
-   const numbers=[],matches=[];const fieldsPresent={transactionNo:false,roomTicketNo:false,taskList:false};
+   const numbers=[],matches=[],matchedRecords=[];const fieldsPresent={transactionNo:false,roomTicketNo:false,taskList:false};
    for(const [id,row] of records){
     for(const key of Object.keys(fieldsPresent))if(Object.hasOwn(row,ids[key]))fieldsPresent[key]=true;
     const value=plain(row[ids.taskList]?.value).trim();if(value.startsWith(${JSON.stringify(prefix)}))numbers.push(value);
-    if(same(clean({transactionNo:plain(row[ids.transactionNo]?.value),roomTicketNo:plain(row[ids.roomTicketNo]?.value)}),wanted))matches.push(value||'(无任务号)');
+    if(same(clean({transactionNo:plain(row[ids.transactionNo]?.value),roomTicketNo:plain(row[ids.roomTicketNo]?.value)}),wanted)){matches.push(value||'(无任务号)');matchedRecords.push({id,taskNumber:value,expectedEnterAt:row[ids.expectedEnterAt]?.value});}
    }
-   return {recordIds:records.map(([id])=>id),total:decoded.tableRecordNum==null||decoded.tableRecordNum===""?null:Number(decoded.tableRecordNum),numbers,matches,fieldsPresent};
+   return {recordIds:records.map(([id])=>id),total:decoded.tableRecordNum==null||decoded.tableRecordNum===""?null:Number(decoded.tableRecordNum),numbers,matches,matchedRecords,fieldsPresent};
   })()`);}catch{throw review("飞书业务查重读取失败，未允许建单；请稍后在原待办核验");}
   if(!Array.isArray(data?.recordIds)||!Number.isSafeInteger(data.total)||data.total<0)throw review("飞书查重未返回完整记录总数，停止建单");
   if(expectedTotal===null)expectedTotal=data.total;else if(expectedTotal!==data.total)throw review("查重期间主表记录数变化，请重新核验，未允许提交");
   for(const id of data.recordIds){if(seen.has(id))throw review("飞书查重分页重复，不能确认完整性");seen.add(id);}
-  for(const value of data.numbers||[])numbers.add(value);matches.push(...data.matches||[]);offset+=data.recordIds.length;
+  for(const value of data.numbers||[])numbers.add(value);matches.push(...data.matches||[]);matchedRecords.push(...data.matchedRecords||[]);offset+=data.recordIds.length;
   for(const key of Object.keys(verifiedFields))verifiedFields[key] ||= Boolean(data.fieldsPresent?.[key]);
   if(seen.size===expectedTotal){
    if(expectedTotal&&!Object.values(verifiedFields).every(Boolean))throw review("飞书单号或任务号字段映射未核实，停止建单");
-   return {numbers:[...numbers],matches,loaded:seen.size,complete:true};
+   return {numbers:[...numbers],matches,matchedRecords,loaded:seen.size,complete:true};
   }
   if(!data.recordIds.length||seen.size>expectedTotal)throw review("飞书查重分页不完整，停止建单");
  }

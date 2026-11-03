@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { mergeDraftRows, parseCsv, toCsv } from "../../core/draft-merge.mjs";
+import { parseCsv, toCsv } from "../../core/draft-merge.mjs";
 import { inferShiftDateFromSpec, validateDutySpec } from "../../core/duty-spec.mjs";
 
 export class TencentDraftRepository {
@@ -39,95 +39,84 @@ export class TencentDraftRepository {
     };
   }
 
-  async update(spec, { currentDate = "", previousDate = "", context = {} } = {}) {
-    validateDutySpec(spec);
-    const sheets = await this.#sheets();
-    const existing = await this.read(sheets);
-    const year = String(currentDate || context.workDate || new Date().getFullYear()).slice(0, 4);
-    const resolvedCurrentDate = String(currentDate || inferShiftDateFromSpec(spec, context)).replaceAll("-", "");
-    const merged = mergeDraftRows({
-      weeklyExisting: existing.weekly,
-      handoverExisting: existing.handover,
-      weeklyIncoming: spec.weeklyRows,
-      handoverIncoming: spec.handoverRows,
-      currentDate: resolvedCurrentDate,
-      previousDate: String(previousDate || "").replaceAll("-", ""),
-      year,
-    });
-
+  async update(spec, options = {}) {
     await fs.mkdir(this.backupDir, { recursive: true });
-    await fs.writeFile(
-      path.join(this.backupDir, `${resolvedCurrentDate}-${Date.now()}.json`),
-      JSON.stringify({
-        fileId: this.config.draft.online_file_id,
-        currentDate: resolvedCurrentDate,
-        previousDate,
-        weekly: existing.weekly,
-        handover: existing.handover,
-      }, null, 2),
-      "utf8",
-    );
+    const lockPath = path.join(this.backupDir, "draft-writer.tmp");
+    let lock;
+    try { lock = await fs.open(lockPath, "wx"); }
+    catch { throw Error("已有草稿写入或未核验的中断，请本机维护"); }
+    try { return await this.#update(spec, options); }
+    finally { await lock.close(); await fs.unlink(lockPath); }
+  }
 
-    await this.#replace(sheets.weekly, [merged.weeklyHeader, ...merged.weeklyRows]);
-    await this.#replace(sheets.handover, [merged.handoverHeader, ...merged.handoverRows]);
-    await this.#format(sheets.weekly, 17, merged.weeklyRows.length + 1, "weekly");
-    await this.#format(sheets.handover, 9, merged.handoverRows.length + 1, "handover");
-    await this.#verify(sheets.weekly, 17, merged.weeklyRows.length + 1);
-    await this.#verify(sheets.handover, 9, merged.handoverRows.length + 1);
-
+  async #update(spec, { currentDate = "", previousDate = "", context = {} } = {}) {
+    validateDutySpec(spec);
+    if ((await fs.readdir(this.backupDir)).some(name => name.endsWith(".pending.json"))) {
+      throw Error("草稿有待核验写入，禁止自动重试，请本机维护");
+    }
+    const sheets = await this.#sheets();
+    const resolvedCurrentDate = String(currentDate || inferShiftDateFromSpec(spec, context)).replaceAll("-", "");
+    const weeklyRows = await this.#append(sheets.weekly, spec.weeklyRows || [], 17, true);
+    const handoverRows = await this.#append(sheets.handover, spec.handoverRows || [], 9, false);
     return {
       fileId: this.config.draft.online_file_id,
       fileUrl: this.config.draft.online_file_url,
       currentDate: resolvedCurrentDate,
       previousDate,
-      keptDates: merged.keptDates,
-      weeklyRows: merged.weeklyRows.length,
-      handoverRows: merged.handoverRows.length,
+      keptDates: [],
+      weeklyRows,
+      handoverRows,
     };
   }
 
-  async #replace(sheet, rows) {
-    await this.client.clear(this.file, sheet.sheet_id, sheet.row_count, sheet.col_count);
-    await this.client.setCsv(this.file, sheet.sheet_id, toCsv(rows));
-  }
-
-  async #format(sheet, width, rowCount, kind) {
-    if (rowCount <= 1) return;
-    const range = `A2:${String.fromCharCode(64 + width)}${rowCount}`;
-    await this.client.setStyle(this.file, sheet.sheet_id, range, {
-      horizontal_align: "center",
-      vertical_align: "center",
-      font_family: "等线",
-      font_size: 10,
-      font_color: "FF000000",
-    });
-    if (kind === "weekly") {
-      await this.client.setStyle(this.file, sheet.sheet_id, `D2:D${rowCount}`, { wrap_text: true });
-      await this.client.setStyle(this.file, sheet.sheet_id, `M2:N${rowCount}`, { number_format_pattern: "h:mm;@" });
-      await this.client.setStyle(this.file, sheet.sheet_id, `Q2:Q${rowCount}`, {
-        number_format_pattern: 'h"时"mm"分";@',
+  async #cells(sheet) {
+    if (!Number.isSafeInteger(sheet.row_count) || !Number.isSafeInteger(sheet.col_count) || sheet.col_count < 1 || sheet.row_count < 1) throw Error("草稿尺寸无效");
+    const cells = [], step = Math.max(1, Math.floor(20000 / sheet.col_count));
+    for (let row = 0; row < sheet.row_count; row += step) {
+      const data = await this.client.callTool("get_cell_data", {
+        file_id: this.file.fileId, file_url: this.file.fileUrl, sheet_id: sheet.sheet_id,
+        start_row: row, start_col: 0, end_row: Math.min(row + step, sheet.row_count) - 1,
+        end_col: sheet.col_count - 1, return_csv: false, include_formula: true,
       });
-    } else {
-      await this.client.setStyle(this.file, sheet.sheet_id, `E2:E${rowCount}`, { wrap_text: true });
+      if (!Array.isArray(data.cells)) throw Error("草稿读取不完整");
+      cells.push(...data.cells.filter(c => c.formula || c.string_value || c.number_value || c.bool_value || /NUMBER|BOOL|FORMULA/.test(c.value_type || "")));
     }
-    await this.client.setBorder(this.file, sheet.sheet_id, range);
+    return cells;
   }
 
-  async #verify(sheet, width, rowCount) {
-    if (rowCount <= 1) return;
-    const range = `A2:${String.fromCharCode(64 + width)}${rowCount}`;
-    const styles = await this.client.getStyles(this.file, sheet.sheet_id, range);
-    const invalid = (styles.cells || []).filter((cell) => {
-      const borders = cell.borders || {};
-      return cell.horizontal_align !== "center"
-        || cell.vertical_align !== "center"
-        || !borders.top
-        || !borders.bottom
-        || !borders.left
-        || !borders.right;
-    });
-    if (invalid.length) {
-      throw new Error(`草稿写入后格式校验失败：${sheet.sheet_name} 有 ${invalid.length} 个单元格不合规`);
+  async #append(sheet, incoming, width, weekly) {
+    const text = c => String(c.string_value || (c.value_type === "NUMBER" ? c.number_value : c.value_type === "BOOL" ? c.bool_value : ""));
+    const key = r => JSON.stringify(weekly ? r.slice(1) : r);
+    if (sheet.col_count < width) throw Error("草稿列数不足");
+    let added = 0;
+    for (const input of incoming) {
+      const before = await this.#cells(sheet), rows = new Map();
+      for (const c of before) {
+        if (!rows.has(c.row)) rows.set(c.row, Array(width).fill(""));
+        if (c.col < width) rows.get(c.row)[c.col] = text(c);
+      }
+      if (!rows.has(0)) throw Error("草稿缺少表头");
+      const row = input.map(v => String(v ?? ""));
+      if ([...rows.entries()].some(([i, r]) => i > 0 && key(r) === key(row))) continue;
+      if (weekly) row[0] = String(Math.max(0, ...[...rows.entries()].filter(([i]) => i > 0).map(([, r]) => Number(r[0]) || 0)) + 1);
+      const target = Math.max(...rows.keys()) + 1;
+      if (target >= sheet.row_count) throw Error("没有整行空白区域，请维护者扩容");
+      const intent = path.join(this.backupDir, `${sheet.sheet_id}-${Date.now()}-${target}.pending.json`);
+      const pending = (await fs.readdir(this.backupDir)).filter(n => n.startsWith(`${sheet.sheet_id}-`) && n.endsWith(".pending.json"));
+      if (pending.length) throw Error("草稿有待核验写入，禁止自动重试，请本机维护");
+      await fs.writeFile(intent, JSON.stringify({sheet, before, target, row}), {flag: "wx"});
+      if (JSON.stringify(await this.#cells(sheet)) !== JSON.stringify(before)) throw Error("写前草稿变化，停止写入");
+      await this.client.setCsv(this.file, sheet.sheet_id, toCsv([row]), target, 0);
+      const after = await this.#cells(sheet), saved = Array(width).fill("");
+      if (JSON.stringify(after.filter(c => c.row !== target)) !== JSON.stringify(before)) throw Error("原记录变化，请本机核验");
+      for (const c of after.filter(c => c.row === target)) {
+        if (c.col >= width || c.formula) throw Error("新增行存在非预期内容");
+        saved[c.col] = text(c);
+      }
+      if (JSON.stringify(saved) !== JSON.stringify(row)) throw Error("新增行读回不一致，请本机核验");
+      await fs.rename(intent, intent.replace(".pending.json", ".verified.json"));
+      added++;
     }
+    return added;
   }
 }
