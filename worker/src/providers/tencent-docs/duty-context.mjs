@@ -152,11 +152,10 @@ export async function buildDutyContext({
     };
   });
 
-  const weeklyCsv = await client.getCsv(
-    weeklySource,
-    weeklySheet.sheet_id,
-    `A1:Q${weeklySheet.row_count}`,
-  );
+  const [weeklyCsv,handoverCsv] = await Promise.all([
+    client.getCsv(weeklySource,weeklySheet.sheet_id,`A1:Q${weeklySheet.row_count}`),
+    client.getCsv(handoverSource,handoverSheet.sheet_id,`A1:I${handoverSheet.row_count}`),
+  ]);
   const weeklyAll = parseCsv(weeklyCsv.csv_data || "");
   const weeklyRecent = weeklyAll
     .filter((row) => row.some((value) => String(value || "").trim() !== ""))
@@ -166,11 +165,6 @@ export async function buildDutyContext({
     .filter(Number.isFinite)
     .reduce((maximum, value) => Math.max(maximum, value), 0) + 1;
 
-  const handoverCsv = await client.getCsv(
-    handoverSource,
-    handoverSheet.sheet_id,
-    `A1:I${handoverSheet.row_count}`,
-  );
   const handoverRows = parseCsv(handoverCsv.csv_data || "").slice(1)
     .filter((row) => String(row[1] || "").trim() === effective.line.name);
   const relevantDates = new Set([dateKey(shift.shiftDate), dateKey(addDays(shift.shiftDate, -1))]);

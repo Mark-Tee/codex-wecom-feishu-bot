@@ -58,3 +58,13 @@ test("the same blank-row color mapping is preserved in ordinary work-order roste
  const context=await buildDutyContext({client,config,operator:"丁",prompt:"预计进入时间：2026-11-03 09:00",receivedAt:"2026-11-03T09:05:00+08:00"});
  assert.equal(context.schedule.find(day=>day.date==="20261103").role.role,"night_primary");
 });
+
+test("independent weekly and handover reads overlap without extra requests",async()=>{
+ const f=fixture(),schedule=f.config.sources.online.schedule,weekly={kind:"weekly"},handover={kind:"handover"},calls=[];
+ const config={...f.config,operator_name:"丁",sources:{mode:"online",online:{schedule,weekly,handover}},weekly:{sheet_format:"M月"},handover:{sheet_format:"YYYYMM"},line:{name:"网络",team_members:["甲","乙","丙","丁"],aux_column_header:"辅值"},defaults:{}};
+ let release;const waiting=new Promise(resolve=>{release=resolve;});let handoverStarted=false;
+ const client={getStyles:async(...args)=>{calls.push("styles");return f.client.getStyles(...args);},getSheetInfo:file=>{calls.push("info");return file===schedule?f.client.getSheetInfo():Promise.resolve({sheets:[{sheet_name:file===weekly?"11月":"202611",sheet_id:file.kind,row_count:2,col_count:17}]});},getCsv:async(file,...args)=>{calls.push("csv");if(file===schedule)return f.client.getCsv(file,...args);if(file===weekly)await waiting;else handoverStarted=true;return {csv_data:toCsv([Array(file===weekly?17:9).fill("表头")])};}};
+ const result=buildDutyContext({client,config,operator:"丁",prompt:"预计进入时间：2026-11-03 09:00",receivedAt:"2026-11-03T09:05:00+08:00"});
+ await new Promise(resolve=>setImmediate(resolve));try{assert.equal(handoverStarted,true);}finally{release();}
+ const context=await result;assert.equal(context.schedule.find(day=>day.date==="20261103").role.role,"night_primary");assert.equal(calls.length,7);
+});
