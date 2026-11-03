@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { parseCsv, toCsv } from "../../core/draft-merge.mjs";
-import { inferShiftDateFromSpec, validateDutySpec } from "../../core/duty-spec.mjs";
+import { inferShiftDateFromSpec, validateDutySpec, groupHandoverRows, handoverKey, mergeHandoverRow } from "../../core/duty-spec.mjs";
 
 export class TencentDraftRepository {
   constructor({
@@ -55,9 +55,10 @@ export class TencentDraftRepository {
       throw Error("草稿有待核验写入，禁止自动重试，请本机维护");
     }
     const sheets = await this.#sheets();
+    const handoverIncoming = await this.#prepareHandover(sheets.handover, groupHandoverRows(spec.handoverRows || []));
     const resolvedCurrentDate = String(currentDate || inferShiftDateFromSpec(spec, context)).replaceAll("-", "");
     const weeklyRows = await this.#append(sheets.weekly, spec.weeklyRows || [], 17, true);
-    const handoverRows = await this.#append(sheets.handover, spec.handoverRows || [], 9, false);
+    const handoverRows = await this.#append(sheets.handover, handoverIncoming, 9, false);
     return {
       fileId: this.config.draft.online_file_id,
       fileUrl: this.config.draft.online_file_url,
@@ -84,6 +85,30 @@ export class TencentDraftRepository {
     return cells;
   }
 
+  async #prepareHandover(sheet, incoming) {
+    if (!incoming.length) return incoming;
+    const cells = await this.#cells(sheet), rows = new Map();
+    for (const c of cells) {
+      if (!rows.has(c.row)) rows.set(c.row, Array(9).fill(""));
+      if (c.col < 9) rows.get(c.row)[c.col] = String(c.string_value || (c.value_type === "NUMBER" ? c.number_value : ""));
+    }
+    const result = [], proposals = [];
+    for (const row of incoming) {
+      const matches = [...rows.entries()].filter(([index, r]) => index > 0 && handoverKey(r) === handoverKey(row));
+      if (matches.length > 1) throw Error("同班次交接草稿有多行，需本机核验，未写入");
+      if (!matches.length) { result.push(row); continue; }
+      const [index, existing] = matches[0];
+      const merged = mergeHandoverRow(existing, row);
+      if (JSON.stringify(existing) === JSON.stringify(merged)) { result.push(existing); continue; }
+      proposals.push({sheetId: sheet.sheet_id, sheetName: sheet.sheet_name, row: index + 1, existing, incoming: row, proposed: merged});
+    }
+    if (proposals.length) {
+      await fs.writeFile(path.join(this.backupDir, `handover-review-${Date.now()}.json`), JSON.stringify({file: this.file, proposals}, null, 2), {flag: "wx"});
+      throw Error(`交接草稿同班次已有记录，合并预览已保存，需本机确认后更新；本次未写腾讯表。待确认：${proposals.map(p => `${p.existing.slice(0, 4).join(" / ")}，第${p.row}行`).join("；")}`);
+    }
+    return result;
+  }
+
   async #append(sheet, incoming, width, weekly) {
     const text = c => String(c.string_value || (c.value_type === "NUMBER" ? c.number_value : c.value_type === "BOOL" ? c.bool_value : ""));
     const key = r => JSON.stringify(weekly ? r.slice(1) : r);
@@ -98,6 +123,9 @@ export class TencentDraftRepository {
       if (!rows.has(0)) throw Error("草稿缺少表头");
       const row = input.map(v => String(v ?? ""));
       if ([...rows.entries()].some(([i, r]) => i > 0 && key(r) === key(row))) continue;
+      if (!weekly && [...rows.entries()].some(([i, r]) => i > 0 && handoverKey(r) === handoverKey(row))) {
+        throw Error("同班次交接草稿已变化，需重新确认合并，未追加重复班次");
+      }
       if (weekly) row[0] = String(Math.max(0, ...[...rows.entries()].filter(([i]) => i > 0).map(([, r]) => Number(r[0]) || 0)) + 1);
       const target = Math.max(...rows.keys()) + 1;
       if (target >= sheet.row_count) throw Error("没有整行空白区域，请维护者扩容");
@@ -107,6 +135,7 @@ export class TencentDraftRepository {
       await fs.writeFile(intent, JSON.stringify({sheet, before, target, row}), {flag: "wx"});
       if (JSON.stringify(await this.#cells(sheet)) !== JSON.stringify(before)) throw Error("写前草稿变化，停止写入");
       await this.client.setCsv(this.file, sheet.sheet_id, toCsv([row]), target, 0);
+      await this.#formatNewRow(sheet, target, weekly);
       const after = await this.#cells(sheet), saved = Array(width).fill("");
       if (JSON.stringify(after.filter(c => c.row !== target)) !== JSON.stringify(before)) throw Error("原记录变化，请本机核验");
       for (const c of after.filter(c => c.row === target)) {
@@ -118,5 +147,21 @@ export class TencentDraftRepository {
       added++;
     }
     return added;
+  }
+
+  async #formatNewRow(sheet, target, weekly) {
+    const row = target + 1, range = `A${row}:${weekly ? "Q" : "I"}${row}`;
+    await this.client.setStyle(this.file, sheet.sheet_id, range, {
+      horizontal_align: "center", vertical_align: "center",
+      ...(!weekly ? {font_family: "宋体", font_size: 11} : {}),
+    });
+    for (const cols of weekly ? ["D:D"] : ["E:F", "H:H"]) {
+      const [start, end] = cols.split(":");
+      await this.client.setStyle(this.file, sheet.sheet_id, `${start}${row}:${end}${row}`, {horizontal_align: "left", wrap_text: true});
+    }
+    if (weekly) {
+      await this.client.setStyle(this.file, sheet.sheet_id, `M${row}:N${row}`, {number_format_pattern: "h:mm;@"});
+      await this.client.setStyle(this.file, sheet.sheet_id, `Q${row}:Q${row}`, {number_format_pattern: 'h"时"mm"分";@'});
+    }
   }
 }

@@ -26,20 +26,9 @@ export function normalizeWeeklyTitle(value, operator) {
   if (!title) return title;
   const names = [operator ? escapeRegExp(operator) : "", "我", "使用人(?:本人)?"].filter(Boolean);
   const pattern = new RegExp(
-    `^(?:[A-Za-z]\\d+-\\d+\\s*)?(?:网络一线[-\\s]*)?(?:陪同\\s*)?(?:${names.join("|")})\\s*(?:一起|去|前往)?\\s*`,
+    `^([A-Za-z]\\d+-\\d+\\s*)?(?:网络一线[-\\s]*)?(?:陪同\\s*)?(?:${names.join("|")})\\s*(?:一起|去|前往)?\\s*`,
   );
-  return title.replace(pattern, "").trim() || title;
-}
-
-function normalizeHandoverTitle(value, operator, selfActionTitles) {
-  const line = String(value || "").trim();
-  if (!line || !operator) return line;
-  const pattern = new RegExp(
-    `^(?:[A-Za-z]\\d+-\\d+\\s*)?(?:网络一线[-\\s]*)?(?:陪同\\s*)?(?:${escapeRegExp(operator)}|我|使用人(?:本人)?)\\s*(?:一起|去|前往)?\\s*`,
-  );
-  if (pattern.test(line)) return `${operator}${line.replace(pattern, "").trim()}`;
-  if (line.startsWith(operator)) return line;
-  return selfActionTitles.has(line) ? `${operator}${line}` : line;
+  return title.replace(pattern, "$1").trim() || title;
 }
 
 export function normalizeCompletedCell(value) {
@@ -61,22 +50,49 @@ export function normalizeDutySpec(spec, operator) {
     row[12] = normalizeTime(row[12]);
     row[13] = normalizeTime(row[13]);
   }
-  const selfActionTitles = new Set(
-    (normalized.weeklyRows || [])
-      .filter((row) => String(row[7]).trim() === "网络一线" && String(row[8]).trim() === "网络一线")
-      .map((row) => String(row[3]).trim())
-      .filter(Boolean),
-  );
   for (const row of normalized.handoverRows || []) {
     row[4] = String(row[4] || "")
       .split(/\r?\n/)
       .map((line) => line.trim().replace(/^\d+[、.．]\s*/, ""))
-      .map((line) => normalizeHandoverTitle(line, operator, selfActionTitles))
+      .map((line) => normalizeWeeklyTitle(line, operator))
       .filter(Boolean)
       .map((line, index) => `${index + 1}、${line}`)
       .join("\n");
   }
+  normalized.handoverRows = groupHandoverRows(normalized.handoverRows || []);
   return normalized;
+}
+
+export const handoverKey = row => JSON.stringify(row.slice(0, 4).map(v => String(v ?? "").trim()));
+
+export function mergeHandoverRow(existing, incoming) {
+  const row = existing.map(v => String(v ?? ""));
+  for (const col of [4, 5]) {
+    const lines = [row[col], incoming[col]].flatMap(value => String(value || "").split(/\r?\n/))
+      .map(line => line.trim().replace(/^\d+[、.．]\s*/, "")).filter(Boolean);
+    const unique = [...new Set(lines)];
+    const meaningful = unique.length > 1 ? unique.filter(line => line !== "无") : unique;
+    row[col] = meaningful.length === 1 && meaningful[0] === "无" ? "无"
+      : meaningful.map((line, i) => `${i + 1}、${line}`).join("\n");
+  }
+  for (const col of [6, 7, 8]) {
+    const next = String(incoming[col] ?? "").trim();
+    if (next && row[col] && next !== row[col]) throw Error("同班次接班人、遗留说明或闭环状态不一致，需确认后汇总");
+    if (next) row[col] = next;
+  }
+  return row;
+}
+
+export function groupHandoverRows(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length !== 9 || row.slice(0, 4).some(v => !String(v ?? "").trim())) {
+      throw Error("交接草稿需完整日期、条线、班次、交班人及9列数据，不能猜测合并");
+    }
+    const key = handoverKey(row);
+    grouped.set(key, mergeHandoverRow(grouped.get(key) || [...row.slice(0, 4), "", "", "", "", ""], row));
+  }
+  return [...grouped.values()];
 }
 
 export function inferShiftDateFromSpec(spec, context = {}) {

@@ -473,7 +473,7 @@ export class ConversationService {
       const text = [
         "**腾讯文档草稿已更新**",
         `使用人 ${operator} · 周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
-        "仅追加，重复内容跳过；已有草稿记录保留。",
+        "周报追加，交接按班次汇总；已有交接行先确认，正式表不自动修改。",
         update.fileUrl,
       ].join("\n");
       await responder.replyProgress(streamId, text, true);
@@ -687,7 +687,7 @@ export class ConversationService {
         "**腾讯文档草稿已更新**",
         `本地短号 ${localTaskId} · 使用人 ${pending.operator}`,
         `周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
-        "仅追加，重复内容跳过；已有草稿记录保留。",
+        "周报追加，交接按班次汇总；已有交接行先确认，正式表不自动修改。",
         update.fileUrl,
       ].filter(Boolean).join("\n");
       await responder.replyProgress(streamId, text, true);

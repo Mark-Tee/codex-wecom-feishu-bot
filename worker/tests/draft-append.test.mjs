@@ -12,8 +12,10 @@ async function fixture(run) {
   const sheets = ["周报草稿", "交接班草稿"].map((sheet_name, i) => ({sheet_name, sheet_id: String(i), row_count: 20, col_count: 26}));
   const data = sheets.map(() => [{row: 0, col: 0, value_type: "STRING", string_value: "表头"}]);
   const writes = [];
+  const styleWrites = [];
   const client = {
     getSheetInfo: async () => ({sheets}), getCsv: async () => ({csv_data: "表头"}),
+    setStyle: async (file, sheet, range, style) => {styleWrites.push({sheet, range, style});},
     callTool: async (name, args) => {assert.equal(name, "get_cell_data"); return {cells: structuredClone(data[Number(args.sheet_id)])};},
     setCsv: async (file, sheet, csv, row) => {
       writes.push([sheet, row]);
@@ -22,8 +24,8 @@ async function fixture(run) {
   };
   const repo = new TencentDraftRepository({client, config: {draft: {online_file_id: "fixture"}}, backupDir: root});
   const weekly = Array(17).fill(""); weekly[3] = "测试事项"; weekly[5] = "11.3";
-  const handover = Array(9).fill(""); handover[0] = "20261103"; handover[4] = "测试事项";
-  try {await run({repo, client, data, writes, spec: {weeklyRows: [weekly], handoverRows: [handover]}, root});}
+  const handover = Array(9).fill(""); handover[0] = "20261103"; handover[1] = "网络"; handover[2] = "白班"; handover[3] = "测试甲"; handover[4] = "测试事项";
+  try {await run({repo, client, data, writes, styleWrites, spec: {weeklyRows: [weekly], handoverRows: [handover]}, root});}
   finally {await fs.rm(root, {recursive: true, force: true});}
 }
 
@@ -40,7 +42,8 @@ test("append respects occupied far columns, zero, false, formulas; retry skips b
 
 test("partial success resumes only handover when handover read failed", () => fixture(async ({repo, client, spec, writes}) => {
   const read = client.callTool; let fail = true;
-  client.callTool = async (name, args) => {if (args.sheet_id === "1" && fail) throw Error("network"); return read(name, args);};
+  let handoverReads = 0;
+  client.callTool = async (name, args) => {if (args.sheet_id === "1" && ++handoverReads === 2 && fail) throw Error("network"); return read(name, args);};
   await assert.rejects(repo.update(spec), /network/); fail = false;
   await repo.update(spec); assert.deepEqual(writes, [["0", 1], ["1", 1]]);
 }));
@@ -67,7 +70,7 @@ test("saved date requires exact task and actual timestamp, null never passes", (
 test("another writer changing the table before append stops without writing", () => fixture(async ({repo, client, data, spec, writes}) => {
   const read = client.callTool; let calls = 0;
   client.callTool = async (name, args) => {
-    if (++calls === 2) data[0].push({row: 1, col: 25, string_value: "other writer"});
+    if (++calls === 3) data[0].push({row: 1, col: 25, string_value: "other writer"});
     return read(name, args);
   };
   await assert.rejects(repo.update(spec), /写前草稿变化/);
@@ -87,3 +90,26 @@ test("submission readback retries changed pagination only and remains bounded", 
   await assert.rejects(verifySubmission(null, {}, {expectedEnterAt: "2026-11-03 06:00"}, "TEST", async () => {calls++; return {...saved, matchedRecords: [{taskNumber: "TEST", expectedEnterAt: null}]};}), /禁止重新建单/);
   assert.equal(calls, 1);
 });
+
+test("existing shift saves review before any weekly write and preserves existing row", () => fixture(async ({repo, spec, writes, root, data}) => {
+  await repo.update(spec);
+  const before = structuredClone(data);
+  spec.weeklyRows[0][3] = "另一项工作";
+  spec.handoverRows[0][4] = "另一项工作";
+  await assert.rejects(repo.update(spec), /需本机确认后更新/);
+  assert.equal(writes.length, 2);
+  assert.deepEqual(data, before);
+  const reviewFile = (await fs.readdir(root)).find(name => name.startsWith("handover-review-"));
+  const review = JSON.parse(await fs.readFile(path.join(root, reviewFile), "utf8"));
+  assert.equal(review.proposals[0].row, 2);
+  assert.equal(review.proposals[0].proposed[4], "1、测试事项\n2、另一项工作");
+}));
+
+test("historical formatting touches appended rows only, keeps fractional estimates", () => fixture(async ({repo, spec, styleWrites}) => {
+  spec.weeklyRows[0][6] = "0.5h";
+  await repo.update(spec);
+  assert(styleWrites.every(call => /2:.*2$/.test(call.range)));
+  assert(styleWrites.some(call => call.sheet === "1" && call.style.font_family === "宋体" && call.style.font_size === 11));
+  assert(styleWrites.some(call => call.range === "E2:F2" && call.style.wrap_text));
+  assert(styleWrites.some(call => call.range === "M2:N2" && call.style.number_format_pattern === "h:mm;@"));
+}));
