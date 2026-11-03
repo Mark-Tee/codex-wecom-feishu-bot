@@ -1,6 +1,15 @@
 const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),path=require("node:path"),os=require("node:os");
 const {readServiceProfile}=require("../lib/service-profile.cjs");
 const {ticketRoute,normalizeTicketCommand}=require("../lib/ticket-policy.cjs");
+
+test("short ticket commands normalize through the real roster-first gateway without crossing bots",()=>{
+ const {normalizeRosterCommand}=require("../lib/roster-command.cjs");
+ const aliases={"单":"/pending","填12":"/fill 12","填 12":"/fill 12","完12":"/done 12","人 测试甲":"/as 测试甲","补 09:00":"补充 09:00","菜单":"/help","状态":"/status"};
+ for(const [input,expected] of Object.entries(aliases)){const actual=normalizeTicketCommand(normalizeRosterCommand('BOT '+input));assert.equal(actual,expected);assert.equal(ticketRoute(actual),['/help','/status'].includes(expected)?'local':'worker');}
+ for(const input of ["班","休下月","休明","交班"])assert.equal(ticketRoute(normalizeTicketCommand(normalizeRosterCommand(input))),"roster");
+ for(const text of ["完成了吗","填写姓名","完12并删除记录","填123456789","补一下数据","人物介绍"])assert.equal(normalizeTicketCommand(text),text);
+ assert.equal(ticketRoute(normalizeTicketCommand('补 修改排班表')),'denied');
+});
 const {createRosterService}=require("../lib/roster-service.cjs");
 
 test("service profiles separate roles ports and entry points, reject invalid configuration",()=>{

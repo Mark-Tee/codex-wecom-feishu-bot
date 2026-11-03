@@ -13,7 +13,7 @@ export function formatPendingTasks(tasks) {
       if (task.browserFill?.requiresReadback || task.browserFill?.requiresLocalReview || task.status === "failed") next = `将短号 ${task.id} 告知维护者核验，暂时无需操作。`;
       else if (task.status === "processing") next = "等待处理结果，不要重复提交。";
       else if (task.browserFill?.submitted) next = ["power-duty", "offsite-feishu", "feishu-test"].includes(task.workflowMode)
-        ? "无需 /done，等待核验结果。" : `发送 /done ${task.id} 生成腾讯草稿。`;
+        ? "无需确认完成，等待核验结果。" : `发送 完${task.id} 生成腾讯草稿。`;
       const status = task.browserFill?.awaitingWriteApproval ? "识别完成，待本机核准写入"
         : task.browserFill?.requiresReadback ? "飞书提交待读回核验"
         : task.browserFill?.requiresLocalReview ? "待本机核验"
@@ -60,7 +60,7 @@ export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty
       "**飞书已自动核对并提交**",
       localId,
       result.taskNumber ? `任务列表：${result.taskNumber}` : "",
-      testOnly ? "下一步：等待维护者核验测试记录；本次只测试飞书，不写腾讯草稿，你无需发送 /done。" : powerDuty ? "下一步：无需操作。动力值班仅建飞书单，不生成腾讯草稿。" : skipDraft ? "下一步：无需操作。当日异地安排，不生成本地站点草稿。" : `下一步：发送 /done ${taskId || "<短号>"}，生成腾讯周报和交接草稿。`,
+      testOnly ? "下一步：等待维护者核验测试记录；本次只测试飞书，不写腾讯草稿，你无需发送 /done。" : powerDuty ? "下一步：无需操作。动力值班仅建飞书单，不生成腾讯草稿。" : skipDraft ? "下一步：无需操作。当日异地安排，不生成本地站点草稿。" : `下一步：发送 完${taskId || "<短号>"}，生成腾讯周报和交接草稿。`,
     ].filter(Boolean).join("\n");
   }
   if (result.ok) {
@@ -70,7 +70,7 @@ export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty
       result.taskNumber ? `任务列表：${result.taskNumber}` : "",
       autoSubmit
         ? "下一步：联系维护者检查浏览器，尚未确认提交成功，请勿重发工单或发送 /done。"
-        : `下一步：请核对后手工点击提交。确认提交成功后${powerDuty || skipDraft || testOnly ? "无需 /done。" : `发送 /done ${taskId || "<短号>"}。`}`,
+        : `下一步：请核对后手工点击提交。确认提交成功后${powerDuty || skipDraft || testOnly ? "无需 /done。" : `发送 完${taskId || "<短号>"}。`}`,
     ].filter(Boolean).join("\n");
   }
   return [

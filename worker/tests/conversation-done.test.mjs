@@ -371,7 +371,7 @@ test("浏览器自动提交后只回复结果，不再发送完整填报卡", as
   const reply = await waitForReply(collector.replies, "飞书已自动核对并提交");
   assert.doesNotMatch(reply.text, /真实写入待实单验收/);
   assert.match(reply.text, /本地短号：1/);
-  assert.match(reply.text, /\/done 1/);
+  assert.match(reply.text, /完1/);
   assert.equal(updateCalls, 0);
   assert.equal(pendingTasks.activeCount(JSON.stringify(["wecom","chat-a","u1"])), 1);
 });
@@ -409,7 +409,7 @@ test("protected fill replies never append conflicting retry or done instructions
    const c=responseCollector();await service.handle(message("/fill 1"),c.responder);
    const reply=await waitForReply(c.replies,"下一步：");
    assert.match(reply.text,/暂时无需操作/);
-   assert.doesNotMatch(reply.text,/核对后.*\/fill 1|提交飞书后发送|发送 \/done 1/);
+   assert.doesNotMatch(reply.text,/核对后.*\/fill 1|提交飞书后发送|发送 \/done 1|发送 完1/);
   }
  }
 });
@@ -428,8 +428,8 @@ test("next action uses the current short ID after existing browser task-number r
  pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",draftSpec:validSpec()});
  const c=responseCollector();await service.handle(message("/fill 1"),c.responder);
  const reply=await waitForReply(c.replies,"下一步：");
- assert.match(reply.text,/本地短号：7/);assert.match(reply.text,/发送 \/done 7/);
- assert.doesNotMatch(reply.text,/发送 \/done 1/);
+ assert.match(reply.text,/本地短号：7/);assert.match(reply.text,/发送 完7/);
+ assert.doesNotMatch(reply.text,/发送 (?:\/done 1|完1)/);
 });
 
 test("completed fill and cross-chat short ID make zero browser and model calls",async()=>{

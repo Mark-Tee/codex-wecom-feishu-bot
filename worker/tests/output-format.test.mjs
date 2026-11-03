@@ -61,7 +61,7 @@ test("write approval block is recognition success and never suggests Tencent com
 
 test("success receipt keeps IDs and next action without the filled-field inventory",()=>{
  const text=formatBrowserFillSummary({configured:true,submitted:true,taskNumber:"WD20261104001",filled:["任务列表","指派人员","陪同人"]},{taskId:"10"});
- assert.match(text,/WD20261104001/);assert.match(text,/本地短号：10/);assert.match(text,/发送 \/done 10/);assert.doesNotMatch(text,/已填：|指派人员|陪同人/);assert.ok(text.split("\n").length<=4);
+ assert.match(text,/WD20261104001/);assert.match(text,/本地短号：10/);assert.match(text,/发送 完10/);assert.doesNotMatch(text,/已填：|指派人员|陪同人/);assert.ok(text.split("\n").length<=4);
 });
 
 test("each write outcome gives a safe next action and concrete local ID", () => {
@@ -74,10 +74,10 @@ test("each write outcome gives a safe next action and concrete local ID", () => 
  ]) {
   const text=formatBrowserFillSummary({configured:true,...result},options);
   assert.match(text,/下一步：/);assert.match(text,/本地短号：10.*不是飞书单号/);
-  assert.doesNotMatch(text,/请核对后补填并手工提交|发送 \/done 10/);
+  assert.doesNotMatch(text,/请核对后补填并手工提交|发送 \/done 10|发送 完10/);
  }
- assert.match(formatBrowserFillSummary({configured:true,submitted:true},options),/下一步：发送 \/done 10/);
- assert.doesNotMatch(formatBrowserFillSummary({configured:true,submitted:true},{...options,testOnly:true}),/下一步：发送 \/done/);
+ assert.match(formatBrowserFillSummary({configured:true,submitted:true},options),/下一步：发送 完10/);
+ assert.doesNotMatch(formatBrowserFillSummary({configured:true,submitted:true},{...options,testOnly:true}),/下一步：发送 (?:\/done|完)/);
  const pending=formatPendingTasks([{id:"10",status:"ready",browserFill:{requiresLocalReview:true}},{id:"11",status:"ready",browserFill:{submitted:true}}]);
- assert.match(pending,/将短号 10 告知维护者核验/);assert.match(pending,/发送 \/done 11/);
+ assert.match(pending,/将短号 10 告知维护者核验/);assert.match(pending,/发送 完11/);
 });
