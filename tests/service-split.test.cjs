@@ -35,3 +35,12 @@ test("roster service refuses unauthorized senders and never dispatches unrelated
  }
  assert.equal(state.__pairing,undefined);assert.deepEqual(state.__operators,["owner"]);assert.equal(dispatched,1);assert.ok(saves>0);
 });
+
+test("handoff status is authorized, per-user and documented in roster menu",async()=>{
+ const replies=[],users=[];const state={__operators:["owner"]};
+ const handle=createRosterService({state,save(){},controller:{command:async()=>false},handoff:{status:user=>{users.push(user);return "本人动力交班状态";}},reply:async(_,text)=>replies.push(text)});
+ const frame=(id,user,text)=>({cmd:"aibot_msg_callback",body:{msgid:id,msgtype:"text",chattype:"single",from:{userid:user},text:{content:text}}});
+ await handle(frame("one","owner","动力交班状态"));assert.deepEqual(users,["owner"]);assert.match(replies.at(-1),/本人动力交班状态/);
+ await handle(frame("two","other","动力交班状态"));assert.deepEqual(users,["owner"]);assert.match(replies.at(-1),/无权限/);
+ const {ROSTER_HELP}=require("../lib/roster-service.cjs");for(const text of ["动力交班状态","16:30","07:30","模拟草稿","仅私聊"])assert(ROSTER_HELP.includes(text));
+});

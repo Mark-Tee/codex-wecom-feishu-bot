@@ -79,7 +79,8 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw);
     if (leave) roles.push(raw);
     if (!roles.length) roles.push(raw ? `${raw}（岗位待核对）` : "原表空白，需结合前夜排班核对");
-    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave};
+    const shiftKind=raw===config.schedule.primary_white_value ? "white" : raw===config.schedule.primary_night_value ? "night" : "";
+    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave, shiftKind, offsite:Boolean(offsite)};
   }));
   return {date, groups, power, warnings, people};
 }

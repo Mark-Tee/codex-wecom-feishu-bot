@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Dedicated read-only roster entry point. No Codex runner, Feishu browser or ticket worker.
+// Read-only roster and handoff entry point. No model, form filling or ticket worker.
 const fs=require("node:fs"),path=require("node:path"),http=require("node:http"),crypto=require("node:crypto");
 const {pathToFileURL}=require("node:url");
 const {readServiceProfile}=require("./lib/service-profile.cjs");
@@ -7,6 +7,7 @@ const {appendRotatingLog}=require("./lib/rotating-log.cjs");
 const {WeComLongConnection}=require("./lib/wecom-long-connection.cjs");
 const {createScheduleBroadcast}=require("./lib/schedule-broadcast.cjs");
 const {createRosterService}=require("./lib/roster-service.cjs");
+const {createPowerHandoff}=require("./lib/power-handoff.cjs");
 const ROOT=__dirname,profile=readServiceProfile(ROOT);
 if(profile.role!=="roster")throw Error("Roster entry requires service.role=roster");
 const config=JSON.parse(fs.readFileSync(path.join(ROOT,"config.json"),"utf8").replace(/^\uFEFF/,""));
@@ -36,8 +37,33 @@ const controller=createScheduleBroadcast({state,save,reply,send:(chatid,chatType
   const readOnly=Object.freeze({getSheetInfo:client.getSheetInfo.bind(client),getCsv:client.getCsv.bind(client),getStyles:client.getStyles.bind(client)});
   return formatScheduleBroadcast(await readScheduleBroadcast({client:readOnly,config:business(),at,...selection}),{viewer:selection.viewer||""});
 }});
+const handoffSettings=config.roster.powerHandoff;
+async function handoffSchedule(at) {
+  const {powerHandoffSlot,powerHandoffPeople}=await load("src/core/power-handoff.mjs");
+  const {readScheduleBroadcast}=await load("src/providers/tencent-docs/schedule-broadcast.mjs");
+  const {TencentDocsClient}=await load("src/providers/tencent-docs/client.mjs");
+  const slot=powerHandoffSlot(at);if(!slot)throw Error("不在动力交班提醒窗口");
+  const client=new TencentDocsClient();
+  const snapshot=await readScheduleBroadcast({client:Object.freeze({getSheetInfo:client.getSheetInfo.bind(client),getCsv:client.getCsv.bind(client),getStyles:client.getStyles.bind(client)}),config:business(),at,offsets:slot.offsets});
+  const people=powerHandoffPeople(slot,snapshot);
+  return {slot,people,owner:people.owner};
+}
+const handoff=handoffSettings?.enabled ? createPowerHandoff({state,save,schedule:handoffSchedule,enabledAt:handoffSettings.enabledAt,ready:()=>connection.authenticated,
+  authorized:user=>allowUsers.length?allowUsers.includes(user):(state.__operators||[]).includes(user),log,
+  send:(user,text)=>connection.send("aibot_send_msg",{chatid:user,chat_type:1,msgtype:"markdown",markdown:{content:text}}),
+  draft:async(context)=>{
+    const {loadConfig}=await load("src/config.mjs");
+    const {readHandoffRecords}=await load("src/platforms/feishu-browser/handoff-reader.mjs");
+    const {formatPowerHandoff}=await load("src/core/power-handoff.mjs");
+    const workerConfig=loadConfig(path.resolve(ROOT,handoffSettings.workerConfigPath));
+    const records=await readHandoffRecords(workerConfig.feishuBrowser,context.slot.prefix);
+    const latest=await handoffSchedule(new Date());
+    if(latest.slot.key!==context.slot.key||JSON.stringify(latest.people)!==JSON.stringify(context.people))throw Error("交班排班已变化，重新核验后再生成");
+    return formatPowerHandoff({slot:context.slot,people:context.people,records,settings:{...handoffSettings,siteName:business().site_rules.home_site},generatedAt:new Date()}).text;
+  },
+}) : null;
 const health=()=>({service:"codex-wecom-bridge",serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"),role:"roster",pid:process.pid,authenticated:connection.authenticated,uptimeSeconds:Math.floor(process.uptime()),busy:false,connectionStale:Boolean(connection.healthWatch&&Date.now()-connection.healthWatch.snapshot().lastReceivedAt>300_000)});
-handle=createRosterService({state,save,controller,reply,health,allowUsers,makeCode:()=>String(crypto.randomInt(100000,1000000))});
+handle=createRosterService({state,save,controller,reply,health,handoff,allowUsers,makeCode:()=>String(crypto.randomInt(100000,1000000))});
 const server=http.createServer((req,res)=>{if(req.method==="GET"&&req.url==="/health"){res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(health()));}else{res.writeHead(404);res.end();}});
 server.on("error",()=>{log("排班端口占用或不可用，本实例退出");process.exit(1);});
 let timer;
@@ -45,7 +71,7 @@ server.listen({port:profile.healthPort,host:"127.0.0.1",exclusive:true},()=>{
   if(!allowUsers.length && !(state.__operators||[]).length && !(state.__pairing?.expiresAt>Date.now())) {
     state.__pairing={code:String(crypto.randomInt(100000,1000000)),expiresAt:Date.now()+600_000};save(state);
   } else syncPairing(state);
-  connection.start();timer=setInterval(()=>controller.tick().catch(()=>log("排班定时器异常，稍后重试")),30000);log("排班专用实例已启动，只读且不调用模型");
+  connection.start();timer=setInterval(async()=>{try{await controller.tick();await handoff?.tick();}catch{log("排班定时器异常，稍后重试");}},30000);log("排班专用实例已启动，只读且不调用模型");
 });
 function shutdown(){clearInterval(timer);connection.stop();server.close();process.exit(0);}
 process.on("SIGINT",shutdown);process.on("SIGTERM",shutdown);
