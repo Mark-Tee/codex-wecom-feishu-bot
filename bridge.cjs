@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+const {dutyErrorReply}=require("./lib/duty-error.cjs");
 const {remoteDenial}=require("./lib/remote-policy.cjs");
 const {ROSTER_HELP}=require("./lib/roster-service.cjs");
 const { startScheduleBroadcast } = require("./lib/schedule-broadcast.cjs");
@@ -779,11 +780,12 @@ async function processDutyAgentTask({ frame, prompt, chatKey, userId, images = [
     await replyStream(frame, streamId, truncate(text), true);
     log("duty agent done", `${Math.round((Date.now() - startedAt) / 1000)}s`);
   } catch (error) {
-    log("duty agent failed", error.message);
+    const failureRef = reqId("duty-error");
+    log("duty agent failed", failureRef, error.message);
     await replyStream(
       frame,
       streamId,
-      truncate(`**值班任务失败**\n\n${error.message}`),
+      dutyErrorReply(error, failureRef),
       true,
     ).catch(() => {});
   } finally {

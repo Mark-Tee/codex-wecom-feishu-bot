@@ -15,3 +15,6 @@
 
 ## 识别与写入阶段
 识别完成且在浏览器打开前被单次许可拦截时，独立标记 awaitingWriteApproval，回复“识别已完成·等待写入许可”；待办显示待本机核准，禁止引导/done。已打开页面或结果不明时仍走原核验提示，不声称零写入。新增消息本地生成，无新增模型调用或在线资源费用。
+
+## Worker deployment acceptance
+A source test pass does not verify the deployed worker directory. After deploying worker files, run the actual configured worker entry with a synthetic `/help` message from an isolated temporary working directory. Verify the returned JSON contains help text, not merely exit code zero. This exercises static imports without model calls, browser actions, or online table writes; keep its state outside the production working directory. Include the field-discovery module and its dependencies when deploying the browser filler. Remote failures return a concise cause and reference; detailed diagnostics remain in local logs.
