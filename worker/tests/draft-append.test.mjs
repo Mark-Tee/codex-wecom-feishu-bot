@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {TencentDraftRepository} from "../src/providers/tencent-docs/draft-repository.mjs";
 import {parseCsv} from "../src/core/draft-merge.mjs";
-import {assertSavedDate} from "../src/platforms/feishu-browser/submission-readback.mjs";
+import {assertSavedDate, verifySubmission} from "../src/platforms/feishu-browser/submission-readback.mjs";
 
 async function fixture(run) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "draft-append-"));
@@ -73,3 +73,17 @@ test("another writer changing the table before append stops without writing", ()
   await assert.rejects(repo.update(spec), /写前草稿变化/);
   assert.equal(writes.length, 0);
 }));
+
+test("submission readback retries changed pagination only and remains bounded", async () => {
+  let calls = 0;
+  const saved = {complete: true, matchedRecords: [{taskNumber: "TEST", expectedEnterAt: 1793656800000}]};
+  const read = async () => {if (++calls === 1) throw Error("查重期间主表记录数变化"); return saved;};
+  await verifySubmission(null, {}, {expectedEnterAt: "2026-11-03 06:00"}, "TEST", read);
+  assert.equal(calls, 2);
+  calls = 0;
+  await assert.rejects(verifySubmission(null, {}, {}, "TEST", async () => {calls++; throw Error("查重期间主表记录数变化");}), /禁止重新建单/);
+  assert.equal(calls, 3);
+  calls = 0;
+  await assert.rejects(verifySubmission(null, {}, {expectedEnterAt: "2026-11-03 06:00"}, "TEST", async () => {calls++; return {...saved, matchedRecords: [{taskNumber: "TEST", expectedEnterAt: null}]};}), /禁止重新建单/);
+  assert.equal(calls, 1);
+});

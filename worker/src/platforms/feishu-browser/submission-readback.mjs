@@ -13,7 +13,21 @@ export function assertSavedDate(snapshot, taskNumber, expectedEnterAt) {
   }
 }
 
-export async function verifySubmission(session, config, card, taskNumber) {
-  const snapshot = await readOrderSnapshot(session, config, card);
-  assertSavedDate(snapshot, taskNumber, card.expectedEnterAt);
+export async function verifySubmission(session, config, card, taskNumber, readSnapshot = readOrderSnapshot) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const snapshot = await readSnapshot(session, config, card);
+      assertSavedDate(snapshot, taskNumber, card.expectedEnterAt);
+      return;
+    } catch (cause) {
+      // Only retry a read when pagination totals change; never retry submission or a wrong date.
+      if (attempt < 2 && cause.message.includes("查重期间主表记录数变化")) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        continue;
+      }
+      const error = Error(`飞书已尝试提交，任务 ${taskNumber} 待本机只读核验，禁止重新建单：${cause.message}`, {cause});
+      error.requiresLocalReview = true;
+      throw error;
+    }
+  }
 }
