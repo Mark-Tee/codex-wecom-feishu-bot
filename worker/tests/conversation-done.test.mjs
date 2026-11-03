@@ -404,6 +404,7 @@ test("protected fill replies never append conflicting retry or done instructions
  for(const workflowMode of ["manual-feishu","power-duty","offsite-feishu","feishu-test"]) {
   for(const result of [{awaitingWriteApproval:true,requiresLocalReview:true},{submitted:true,requiresReadback:true},{requiresLocalReview:true,message:"相同业务工单已在飞书存在，未新增。请核对原任务：任务甲"}]) {
    const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,...result})}});
+   if(workflowMode === "feishu-test") service.config.feishuBrowser.writeApprovalFile="local-test-permit";
    pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",workflowMode,powerDuty:{date:"20261026",kind:"白班"},siteAssignment:{slot:"网络1",site:"其他站点",assignmentType:"告警值班"},draftSpec:validSpec()});
    const c=responseCollector();await service.handle(message("/fill 1"),c.responder);
    const reply=await waitForReply(c.replies,"下一步：");
@@ -411,6 +412,15 @@ test("protected fill replies never append conflicting retry or done instructions
    assert.doesNotMatch(reply.text,/核对后.*\/fill 1|提交飞书后发送|发送 \/done 1/);
   }
  }
+});
+
+test("normal mode isolates old test tasks without browser, model or Tencent writes", async () => {
+ let calls=0;
+ const {service,pendingTasks}=createService({update:async()=>{calls++;},runner:{run:async()=>{calls++;},stop(){}},browserFiller:{enabled:true,fill:async()=>{calls++;}}});
+ pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",workflowMode:"feishu-test",draftSpec:validSpec()});
+ for(const command of ["/fill 1","/done 1"]){const c=responseCollector();await service.handle(message(command),c.responder);assert.match(c.replies.at(-1).text,/旧测试待办 1 已隔离/);assert.match(c.replies.at(-1).text,/下一步：/);}
+ assert.equal(calls,0);assert.equal(service.queue.size,0);
+ assert.equal(pendingTasks.find("1","chat-a").status,"ready");
 });
 
 test("next action uses the current short ID after existing browser task-number reassignment", async () => {

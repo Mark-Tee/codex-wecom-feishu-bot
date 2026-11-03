@@ -104,6 +104,14 @@ export class ConversationService {
       return;
     }
 
+    const savedTaskCommand = text.match(/^\/(fill|done)\s+#?(\d{1,8})$/i);
+    if (savedTaskCommand && (!this.config.feishuBrowser?.writeApprovalFile || savedTaskCommand[1].toLowerCase() === "done")) {
+      const savedTask = this.pendingTasks.find(savedTaskCommand[2], message.sessionId);
+      if (savedTask?.workflowMode === "feishu-test") {
+        await responder.replyText(`旧测试待办 ${savedTask.id} 已隔离，本次未写在线表。\n下一步：不要用该短号继续正式流程；有新的真实工单时发送新图片，旧测试需要维护者在本机核验。`);
+        return;
+      }
+    }
     this.state.set("__lastChat__", {
       chatId: message.chatId,
       chatType: message.chatType,
