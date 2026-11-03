@@ -1,4 +1,5 @@
 import path from "node:path";
+import inputGuard from "../core/input-guard.cjs";
 import {OBSERVATION_OUTCOMES,failureCategory} from "../runtime/observation.mjs";
 import { loadConfig, loadDutyConfig } from "../config.mjs";
 import { StateStore } from "../state-store.mjs";
@@ -14,8 +15,8 @@ function configPathFromArgs() {
 }
 
 async function readStdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(chunk);
+  const chunks = [];let bytes=0;
+  for await (const chunk of process.stdin){bytes+=chunk.length;if(bytes>inputGuard.MAX_FRAME)throw Error("消息过大，未处理");chunks.push(chunk);}
   return Buffer.concat(chunks).toString("utf8");
 }
 
@@ -26,7 +27,8 @@ function logger(level) {
 }
 
 async function main() {
-  const message = JSON.parse(await readStdin());
+  const message = inputGuard.parseInbound(await readStdin());
+  if(!inputGuard.validateWorkerMessage(message))throw Error("消息格式不正确，未处理");
   const config = loadConfig(configPathFromArgs());
   const dutyConfig = loadDutyConfig(config);
   const state = new StateStore(path.resolve("state.json"));

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import {extractionPolicy,extractionEnvironment,EXTRACTION_INSTRUCTIONS} from "./extraction-policy.mjs";
 import { resolveTencentDocsToken } from "../providers/tencent-docs/client.mjs";
 export { extractDutyJson as extractJsonObject } from "./duty-output.mjs";
 
@@ -70,7 +71,7 @@ export class CodexRunner {
     } else {
       args.push("exec", "-C", this.config.runtime.workdir, "--skip-git-repo-check", "--color", "never");
     }
-    if (this.config.duty.enabled) {
+    if (this.config.duty.enabled && !fastDuty) {
       tuning.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify([this.config.runtime.specRoot])}`);
     }
     if (reasoningEffort) {
@@ -79,22 +80,24 @@ export class CodexRunner {
     if (fastDuty) {
       tuning.push("-c", 'model_verbosity="low"', "-c", 'model_reasoning_summary="none"');
     }
+    const environment=fastDuty?extractionEnvironment(process.env):this.#environment();
+    if(fastDuty){try{tuning.push(...extractionPolicy(this.executable,{cwd:this.config.runtime.workdir,env:environment}));}catch{return Promise.resolve({ok:false,text:"无法核验工单识别权限，已停止；请联系维护者，不要重复提交。",seconds:0});}}
     args.push(
-      "-c", 'sandbox_mode="workspace-write"',
+      "-c", `sandbox_mode="${fastDuty?"read-only":"workspace-write"}"`,
       "-c", 'approval_policy="never"',
-      "-c", "sandbox_workspace_write.network_access=true",
+      "-c", `sandbox_workspace_write.network_access=${!fastDuty}`,
       ...tuning,
-      "-c", `developer_instructions=${JSON.stringify(DEFAULT_INSTRUCTIONS)}`,
+      "-c", `developer_instructions=${JSON.stringify(fastDuty?EXTRACTION_INSTRUCTIONS:DEFAULT_INSTRUCTIONS)}`,
     );
     for (const image of images) args.push("-i", image);
-    args.push("--json", prompt);
+    args.push("--json", "--", prompt);
 
     return new Promise((resolve) => {
       const started = Date.now();
       const child = spawn(this.executable, args, {
         cwd: this.config.runtime.workdir,
         windowsHide: true,
-        env: this.#environment(),
+        env: environment,
         stdio: ["ignore", "pipe", "pipe"],
       });
       this.currentProcess = child;

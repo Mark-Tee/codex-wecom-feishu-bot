@@ -140,3 +140,5 @@ npm run scan:secrets
 更多：[架构](docs/design-notes.md) · [Worker协议](worker/README.md) · [项目状态](docs/PROJECT_STATUS.md) · [短口令](docs/short-commands.md) · [成员隔离](docs/member-context.md) · [按钮](docs/interaction-cards.md) · [清理待办](docs/clear-own-tasks.md) · [权限](docs/remote-safety.md) · [排障](docs/troubleshooting.md)。
 
 MIT，见[LICENSE](LICENSE)。
+
+输入防御：已加入畸形/超长输入校验、授权前媒体拦截、限流、图片内网访问保护及工单识别工具权限限制。使用范围和成本见[防御说明](docs/input-defense.md)；历史入口不据此视为已加固。

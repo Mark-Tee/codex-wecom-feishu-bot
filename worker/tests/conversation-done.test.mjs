@@ -105,6 +105,11 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("orphan confirmation cannot fall through to a general host-capable model run",async()=>{
+ let runs=0;const {service}=createService({runner:{run:async()=>{runs++;return {ok:true,text:"safe"};},stop(){}}});const output=responseCollector();
+ await service.handle(message("是"),output.responder);await settle();await settle();assert.equal(runs,0);assert.match(output.replies.at(-1).text,/工单|菜单|help/);
+});
+
 test("补充图片信息沿用原收单时间，不因跨班次回答重新判断动力岗位", async () => {
   let prompt = "";
   const {service,state} = createService({runner:{run:async input => {prompt=input.prompt;return {ok:true,text:JSON.stringify({needsClarification:"仍有一个字待确认"})};},stop(){}}});

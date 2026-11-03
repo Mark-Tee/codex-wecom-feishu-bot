@@ -81,3 +81,5 @@ node worker/src/scripts/benchmark-feishu-e2e.mjs --help
 The benchmark previews without writes by default. Executing requires a dedicated authorized test table, its fingerprint, `--execute` and `--record`; inspect uncertain in-flight results before resuming. Do not use a shared production table as a substitute.
 
 Read the [architecture](docs/design-notes.md), [worker protocol](worker/README.md), [acceptance status](docs/PROJECT_STATUS.md), [telemetry boundaries](docs/observability.md) and [security policy](SECURITY.md). Runtime data and real credentials never belong in Git. MIT: [LICENSE](LICENSE).
+
+Input defenses validate payloads before media/model work, bound admission and downloads, block private-address image fetches, and restrict extraction tools. See [scope, limits and costs](docs/input-defense.md); this does not establish OS isolation or harden every legacy entry.

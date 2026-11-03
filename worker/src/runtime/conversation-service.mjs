@@ -1,6 +1,7 @@
 import {buildFeishuTestPrompt} from "../core/feishu-test-prompt.mjs";
 import {resolveTaskShiftForWorkOrder,parseExpectedEnterAt} from "../core/task-workflow.mjs";
 import remotePolicy from "../core/remote-policy.cjs";
+import inputGuard from "../core/input-guard.cjs";
 import crypto from "node:crypto";
 import { applySiteRecordRules } from "../core/site-assignment.mjs";
 import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
@@ -82,6 +83,8 @@ export class ConversationService {
   }
 
   async handle(message, responder) {
+    if(!inputGuard.validateWorkerMessage(message)){await responder.replyText("消息格式或长度不符合要求，请发送菜单查看用法。");return;}
+    message={...message,images:message.images||[]};
     if (!message.userId || !message.chatId || message.userId === "unknown") {
       await responder.replyText("无法识别发起人，未处理任务，请重新发送。"); return;
     }
@@ -229,6 +232,9 @@ export class ConversationService {
     if (pendingDuty.handled) return;
     if (pendingDuty.task) message = pendingDuty.task;
 
+    if(this.config.duty.enabled&&!isDutyIntent(message.text,message.images)){
+      await responder.replyText("这是工单机器人，只处理工单和本人待办。没有待确认的问题时无需回复是/不是；发送“菜单”查看用法。");return;
+    }
     const task = {
       id: requestId("task"),
       kind: this.config.duty.enabled && isDutyIntent(message.text, message.images)
