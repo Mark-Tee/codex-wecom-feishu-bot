@@ -1,4 +1,5 @@
 import { rosterNames as names } from "./roster-names.mjs";
+import { validateDutyIdentifiers } from "./duty-identifiers.mjs";
 
 export function resolveSiteAssignment({ row, headers, config, operator = config.operator_name }) {
   const rules = config.site_rules;
@@ -40,8 +41,7 @@ export function applySiteRecordRules(spec, { context, fillCard, config }) {
   // Only fields extracted from the actual ticket are accepted, never a location inferred
   // from a default weekly row or an attendance swipe.
   const hasHomeTicket = isHome(fillCard?.location)
-    && /^SJSW\d{14}$/.test(String(fillCard?.transactionNo || ""))
-    && /^JF\d{14}$/.test(String(fillCard?.roomTicketNo || ""));
+    && validateDutyIdentifiers(fillCard).length === 0;
   if (standby && (!hasHomeTicket || (spec.weeklyRows || []).length !== 1)) {
     throw new Error("待命本身不生成记录，只登记地点和单号明确的一条实际工单，请核对工单信息");
   }
