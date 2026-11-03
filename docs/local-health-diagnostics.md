@@ -11,3 +11,6 @@
 已离线模拟超时、连接拒绝、HTTP/JSON/身份异常、恢复计数和延迟检查，确认失败门槛不变；当前短期真实探测采样成功，不代表已复现或修复历史根因，也不替代重启登录或长期稳定性验收。
 
 没有新增轮询、外网请求、模型调用、依赖或托管；沿用已有日志轮转。开发与调试占用当前会话额度，不能把运行时无新增模型调用说成整个服务免费。实际服务流量及模型月度消耗仍未完整测量。
+
+## Console-free Windows startup
+Scheduled recovery and Startup shortcuts launch `launch-hidden.vbs` through Windows Script Host. It hides PowerShell before creation and waits for the guardian, preserving scheduler status, exit codes and single-instance protection. Minute recovery and local health checks remain unchanged; this adds no model calls or network polling. Windows Script Host must be enabled. Existing scheduled actions must be updated or reinstalled to use the new entry.
