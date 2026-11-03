@@ -33,6 +33,9 @@ const WSImpl = (() => {
 })();
 
 const ROOT = __dirname;
+const {createObservability}=require("./lib/observability.cjs");
+const observability=createObservability({root:ROOT,role:"ticket"});
+observability.flush();
 const {readServiceProfile} = require("./lib/service-profile.cjs");
 const {ticketRoute,normalizeTicketCommand,TICKET_HELP,ticketBusyReply} = require("./lib/ticket-policy.cjs");
 const {createInteractionCards}=require("./lib/interaction-cards.cjs");
@@ -75,6 +78,7 @@ function localTimestamp() {
 }
 
 function log(...parts) {
+  observability.system(parts);
   const line = `[${localTimestamp()}] ${parts.join(" ")}`;
   console.log(line);
   try {
@@ -770,13 +774,16 @@ async function processDutyAgentTask({frame,prompt,chatKey,userId,images=[],ocrTe
     if(!local&&!frame.__cardAction)progressTimer=setInterval(()=>progress.heartbeat(Math.round((Date.now()-startedAt)/1000)),15000);
     if(!local&&!frame.__cardAction)await progress.start().catch(()=>{});
     const result=await runDutyAgent({id:body.msgid||reqId("duty"),chatId:body.chatid||body.from?.userid||chatKey,chatType:body.chattype==="group"?"group":"single",userId:userId||"unknown",platform:"wecom",text:prompt,images:images.map(path=>({path,text:""})),ocrText,receivedAt:localTimestamp()},{onStage:stage=>progress.stage(stage)});
+    for(const outcome of Array.isArray(result.observations)?result.observations:[])observability.mark(frame,outcome);
+    for(const error of Array.isArray(result.errors)?result.errors:[])observability.record({type:"error",error});
     const replies=Array.isArray(result.replies)?result.replies:[],finalReply=[...replies].reverse().find(reply=>reply.kind==="final")||[...replies].reverse().find(reply=>reply.text);
     await progress.finish(finalReply?.text||"值班代理已结束，但没有返回结果。",finalReply?.action);
     log("duty agent done",Math.round((Date.now()-startedAt)/1000)+"s");
   }catch(error){
+    observability.mark(frame,"failed");
     const failureRef=reqId("duty-error");log("duty agent failed",failureRef,error.message);
     await progress.finish(dutyErrorReply(error,failureRef)).catch(()=>{});
-  }finally{clearInterval(progressTimer);}
+  }finally{clearInterval(progressTimer);observability.finish(frame,"worker_returned",true);}
 }
 
 async function processDutyDraftTask({ frame, prompt, chatKey, userId, images = [], dutyDraft }) {
@@ -1127,11 +1134,17 @@ async function sendChatMessage(chatid, chatType, text) {
 }
 
 async function handleText(frame, images = [], extraText = "", ocrText = "") {
+  try{return await handleTextImpl(frame,images,extraText,ocrText);}
+  catch(error){observability.mark(frame,"failed");throw error;}
+  finally{observability.finish(frame);}
+}
+async function handleTextImpl(frame, images = [], extraText = "", ocrText = "") {
   const body = frame.body || {};
   if (!body.msgid) return;
   // 断线重连后服务端可能重推同一条消息，去重记录持久化到 state.json。
   if (!Array.isArray(state.__seenIds)) state.__seenIds = [];
   if (state.__seenIds.includes(body.msgid)) return;
+  observability.start(frame);
   state.__seenIds.push(body.msgid);
   if (state.__seenIds.length > 300) state.__seenIds = state.__seenIds.slice(-300);
   saveState(state);
@@ -1142,8 +1155,9 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const rosterNormalized = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
   const originalPrompt = serviceProfile.role === "ticket" ? normalizeTicketCommand(rosterNormalized) : rosterNormalized;
   const denied=remoteDenial(originalPrompt);
-  if(denied){await replyText(frame,denied);return;}
+  if(denied){observability.mark(frame,"denied");await replyText(frame,denied);return;}
   if (cfg.allowUsers.length && !cfg.allowUsers.includes(userId)) {
+    observability.mark(frame,"denied");
     log("ignore user", userId);
     return;
   }
@@ -1198,6 +1212,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
 
   if (!isOperator) {
+    observability.mark(frame,"denied");
     await replyText(frame, "你还没有配对。请在电脑上查看 pairing-code.txt，然后发送 /pair <配对码>。").catch(() => {});
     log("unauthorized user", userId);
     return;
@@ -1311,6 +1326,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
       ocrText,
       dutyAgent: true,
     };
+    observability.defer(frame);
     taskQueue.push(queuedTask);
     if (jobRunning) {
       const ahead = taskQueue.length - 1;
@@ -1536,6 +1552,7 @@ function handleFrame(frame) {
   if (frame.cmd) log("frame", frame.cmd);
   switch (frame.cmd) {
     case "aibot_msg_callback": {
+      frame.__observedAt=Date.now();
       const type = frame.body && frame.body.msgtype;
       log("message type", type, frame.body && frame.body.chattype ? frame.body.chattype : "?");
       if (type === "text") {
@@ -1571,7 +1588,7 @@ function startNotifyServer(onReady) {
       const connectionHealth = connection.healthWatch?.snapshot();
       res.writeHead(200, {"content-type":"application/json", "cache-control":"no-store"});
       res.end(JSON.stringify({service:"codex-wecom-bridge", serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"), pid:process.pid, role:serviceProfile.role, authenticated:connection.authenticated,
-        uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild),
+        uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild),observability:observability.status(),
         connectionStale:Boolean(connectionHealth && Date.now() - connectionHealth.lastReceivedAt > 300_000)}));
       return;
     }

@@ -1,4 +1,5 @@
 export const HELP_ENTRIES = Object.freeze([
+ {trigger:"匿名使用统计（自动）",parameters:"",description:"两机器人仅本机汇总指令类别、次数、耗时、结果与错误类别。",example:"正常查询即可，无需额外指令",limits:"不记录正文、图片、姓名、账号；不做个人画像；建议由本机维护复核，不自动修改或上线。"},
  {trigger:"清",parameters:"短号 / 全部",description:"停止本人当前会话追踪；预览可点确认清除或保留待办。",example:"清10；清全部后回复确认清全部",limits:"按钮绑定本次清单；长清单用文字确认；处理中暂不能清；不删在线记录，保留防重状态。"},
  {trigger:"首页 / 我的工单 / 还有哪些没处理",parameters:"",description:"私聊查看本人身份和待办。",example:"首页",limits:"仅本人；群聊、私聊任务独立。"},
  {trigger:"补充",parameters:"内容",description:"短口令：补 内容，回答待确认问题。",example:"补 进入时间为09:00",limits:"仅回答当前待确认问题；不清楚时不要猜。"},

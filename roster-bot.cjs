@@ -10,6 +10,9 @@ const {createRosterService,ROSTER_HELP}=require("./lib/roster-service.cjs");
 const {createInteractionCards}=require("./lib/interaction-cards.cjs");
 const {createPowerHandoff}=require("./lib/power-handoff.cjs");
 const ROOT=__dirname,profile=readServiceProfile(ROOT);
+const {createObservability}=require("./lib/observability.cjs");
+const observability=createObservability({root:ROOT,role:"roster"});
+observability.flush();
 if(profile.role!=="roster")throw Error("Roster entry requires service.role=roster");
 const config=JSON.parse(fs.readFileSync(path.join(ROOT,"config.json"),"utf8").replace(/^\uFEFF/,""));
 const allowUsers=Array.isArray(config.allowUsers)?config.allowUsers:[];
@@ -24,7 +27,7 @@ function syncPairing(value) {
   } else if(fs.existsSync(pairingFile)) fs.rmSync(pairingFile);
 }
 function save(value){const temp=file+".tmp";fs.writeFileSync(temp,JSON.stringify(value,null,2),{mode:0o600});fs.renameSync(temp,file);syncPairing(value);}
-function log(...values){const text=values.map(String).join(" ").replaceAll(config.botId,"[robot]").replaceAll(config.secret,"[credential]");try{appendRotatingLog(path.join(ROOT,"logs","roster.log"),`[${new Date().toISOString()}] ${text}\n`);}catch{}}
+function log(...values){observability.system(values);const text=values.map(String).join(" ").replaceAll(config.botId,"[robot]").replaceAll(config.secret,"[credential]");try{appendRotatingLog(path.join(ROOT,"logs","roster.log"),`[${new Date().toISOString()}] ${text}\n`);}catch{}}
 let WS;try{WS=require("ws");}catch{try{WS=require(path.join(ROOT,"vendor","ws"));}catch{WS=globalThis.WebSocket;}}
 let handle,cards;
 const connection=new WeComLongConnection({WebSocketImpl:WS,url:"wss://openws.work.weixin.qq.com",botId:config.botId,secret:config.secret,log,parseFrame:raw=>{try{return JSON.parse(raw);}catch{return null;}},onFrame:frame=>handle(frame).catch(()=>log("排班消息处理失败，请重试"))});
@@ -74,10 +77,11 @@ const handoff=handoffSettings?.enabled ? createPowerHandoff({state,save,schedule
     return formatPowerHandoff({slot:context.slot,people:context.people,records,settings:{...handoffSettings,siteName:business().site_rules.home_site},generatedAt:new Date()}).text;
   },
 }) : null;
-const health=()=>({service:"codex-wecom-bridge",serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"),role:"roster",pid:process.pid,authenticated:connection.authenticated,uptimeSeconds:Math.floor(process.uptime()),busy:false,connectionStale:Boolean(connection.healthWatch&&Date.now()-connection.healthWatch.snapshot().lastReceivedAt>300_000)});
-const rosterHandle=createRosterService({state,save,controller,reply,health,handoff,allowUsers,makeCode:()=>String(crypto.randomInt(100000,1000000))});
-cards=createInteractionCards({role:"roster",state,save,send:connection.send.bind(connection),reply:rawReply,help:ROSTER_HELP,log,dispatch:frame=>rosterHandle(frame),authorized:user=>allowUsers.length?allowUsers.includes(user):(state.__operators||[]).includes(user)});
-handle=async frame=>{if(await cards.handle(frame))return;return rosterHandle(frame);};
+const health=()=>({service:"codex-wecom-bridge",serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"),role:"roster",pid:process.pid,authenticated:connection.authenticated,uptimeSeconds:Math.floor(process.uptime()),busy:false,observability:observability.status(),connectionStale:Boolean(connection.healthWatch&&Date.now()-connection.healthWatch.snapshot().lastReceivedAt>300_000)});
+const rosterHandle=createRosterService({state,save,controller,reply,health,handoff,allowUsers,observeStart:observability.start,observe:observability.mark,makeCode:()=>String(crypto.randomInt(100000,1000000))});
+cards=createInteractionCards({role:"roster",state,save,send:connection.send.bind(connection),reply:rawReply,help:ROSTER_HELP,log,dispatch:frame=>observedRosterHandle(frame),authorized:user=>allowUsers.length?allowUsers.includes(user):(state.__operators||[]).includes(user)});
+async function observedRosterHandle(frame){try{return await rosterHandle(frame);}catch(error){observability.mark(frame,"failed");throw error;}finally{observability.finish(frame);}}
+handle=async frame=>{if(await cards.handle(frame))return;return observedRosterHandle(frame);};
 const server=http.createServer((req,res)=>{if(req.method==="GET"&&req.url==="/health"){res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(health()));}else{res.writeHead(404);res.end();}});
 server.on("error",()=>{log("排班端口占用或不可用，本实例退出");process.exit(1);});
 let timer;

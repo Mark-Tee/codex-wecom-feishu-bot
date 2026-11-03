@@ -7,6 +7,7 @@ import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
 import { buildPowerDutyPrompt } from "../core/power-duty-prompt.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import {browserOutcome} from "./observation.mjs";
 import {prepareImageEvidence} from "../platforms/image-evidence.mjs";
 import { buildDutyPrompt } from "../core/duty-prompt.mjs";
 import {
@@ -349,6 +350,8 @@ export class ConversationService {
         await this.#runGeneral(task);
       }
     } catch (error) {
+      task.responder.observe?.("failed");
+      task.responder.failure?.(error);
       this.logger.error("任务执行失败", error.message);
       await task.responder.replyProgress(
         requestId("stream"),
@@ -387,6 +390,7 @@ export class ConversationService {
     });
     const warning = context.schedule.flatMap((day) => day.warnings || [])[0];
     if (warning) {
+      responder.observe?.("source_conflict");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
@@ -418,6 +422,7 @@ export class ConversationService {
 
     const parsed = extractDutyJson(result.text);
     if (!parsed) {
+      responder.observe?.("recognition_invalid");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
@@ -430,6 +435,7 @@ export class ConversationService {
       return;
     }
     if (parsed.needsClarification) {
+      responder.observe?.("clarification");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
@@ -453,6 +459,7 @@ export class ConversationService {
       if(!fillCard.specificWork.startsWith("【测试勿统计】"))fillCard.specificWork="【测试勿统计】"+fillCard.specificWork;
     }
     if(feishuTest && !parseExpectedEnterAt(fillCard.expectedEnterAt)){
+      responder.observe?.("clarification");
       await responder.replyProgress(streamId,"工单原日期或时间不清楚，尚未写入飞书。下一步：重新发送日期和时间清晰的原工单图片，不用收到日期代替。",true);return;
     }
     const sitePolicy = powerOnly || feishuTest ? { assignment: null, skipHomeDraft: false } : applySiteRecordRules(normalized, {
@@ -465,6 +472,7 @@ export class ConversationService {
     }
     const identifierErrors = validateDutyIdentifiers(fillCard);
     if (identifierErrors.length) {
+      responder.observe?.("identifiers_invalid");
       await responder.replyProgress(
         streamId,
         [
@@ -490,6 +498,7 @@ export class ConversationService {
         previousDate: context.previousWorkedDate,
         context,
       });
+      responder.observe?.("draft_returned");
       const text = [
         "**腾讯文档草稿已更新**",
         `使用人 ${operator} · 周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
@@ -525,6 +534,7 @@ export class ConversationService {
     if (this.browserFiller?.enabled && this.config.feishuBrowser?.autoFill !== false) {
       await responder.stage?.("checking");
       browserResult = await this.browserFiller.fill(pending);
+      responder.observe?.(browserOutcome(browserResult,this.config.feishuBrowser));
       pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, browserResult);
       this.pendingTasks.setBrowserFill(pending.id, message.sessionId, browserResult);
       browserStatus = formatBrowserFillSummary(browserResult, {
@@ -635,6 +645,7 @@ export class ConversationService {
     }
     await responder.stage?.("checking");
     const result = await this.browserFiller.fill(pending);
+    responder.observe?.(browserOutcome(result,this.config.feishuBrowser));
     pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, result);
     this.pendingTasks.setBrowserFill(pending.id, message.sessionId, result);
     if (pending.workflowMode === "offsite-feishu") {
@@ -709,6 +720,7 @@ export class ConversationService {
         handoverRows: update.handoverRows,
         keptDates: update.keptDates,
       });
+      responder.observe?.("draft_returned");
       const text = [
         "**腾讯文档草稿已更新**",
         `本地短号 ${localTaskId} · 使用人 ${pending.operator}`,
@@ -720,6 +732,8 @@ export class ConversationService {
       await responder.replyProgress(streamId, text, true);
     } catch (error) {
       this.pendingTasks.fail(localTaskId, message.sessionId, error.message);
+      responder.observe?.("failed");
+      responder.failure?.(error);
       this.logger.error("确认飞书提交后更新腾讯草稿失败", error.message);
       await responder.replyProgress(
         streamId,

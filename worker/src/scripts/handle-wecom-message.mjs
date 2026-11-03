@@ -1,4 +1,5 @@
 import path from "node:path";
+import {OBSERVATION_OUTCOMES,failureCategory} from "../runtime/observation.mjs";
 import { loadConfig, loadDutyConfig } from "../config.mjs";
 import { StateStore } from "../state-store.mjs";
 import { ConversationService } from "../runtime/conversation-service.mjs";
@@ -55,8 +56,10 @@ async function main() {
     logger: log,
     browserFiller,
   });
-  const replies = [];
+  const replies = [],observations=[],errors=[];
   const responder = {
+    failure: error=>{errors.push(failureCategory(error));},
+    observe: value=>{if(OBSERVATION_OUTCOMES.has(value))observations.push(value);},
     replyText: async (text, metadata) => { replies.push({ kind: "text", text, ...(metadata?.action?{action:metadata.action}:{}) }); },
     stage: async (stage) => { if(["recognizing","checking"].includes(stage))process.stderr.write("@@BOT_STAGE "+JSON.stringify({stage})+"\n"); },
     replyProgress: async (_id, text, final = false) => {
@@ -72,7 +75,7 @@ async function main() {
   if (service.queue.running || service.queue.size > 0) {
     throw new Error("值班任务处理超时");
   }
-  process.stdout.write(JSON.stringify({ replies }, null, 2));
+  process.stdout.write(JSON.stringify({ replies, observations, errors }, null, 2));
 }
 
 main().catch((error) => {
