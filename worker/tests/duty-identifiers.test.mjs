@@ -63,5 +63,16 @@ test("受控识别提示保留上下架来源及模糊编号确认规则", () =>
   assert.match(prompt, /上下架类型source写上下架/);
   assert.match(prompt, /不另索要SJSW/);
   assert.match(prompt, /已有编号看不清仍须询问/);
+  assert.match(prompt, /workContent选布线、理线相关事项/);
   assert.equal(chooseWorkContent({workContent: "设备上下架", specificWork: "陪同厂商设备上架"}, ["无故障进入机房", "上下架相关事项"]), "上下架相关事项");
+});
+
+test("布线理线可仅用机房单号，有事务号仍严格校验，分类不被陪同覆盖", () => {
+  const card = normalizeFillCard({source: "布线理线", transactionNo: "无", roomTicketNo: "JF20261103000001"});
+  assert.equal(card.transactionNo, "");
+  assert.deepEqual(validateDutyIdentifiers(card), []);
+  assert.equal(validateDutyIdentifiers({...card, roomTicketNo: ""}).length, 1);
+  assert.equal(validateDutyIdentifiers({...card, transactionNo: "SJSW20261303000001"}).length, 1);
+  assert.deepEqual(validateDutyIdentifiers({...card, transactionNo: "SJSW20261103000001"}), []);
+  assert.equal(chooseWorkContent({workContent: "布线、理线", specificWork: "陪同布线"}, ["无故障进入机房", "布线、理线相关事项"]), "布线、理线相关事项");
 });

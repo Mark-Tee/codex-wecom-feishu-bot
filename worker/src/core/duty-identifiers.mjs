@@ -42,6 +42,10 @@ export function validateRoomTicketNo(value) {
 }
 
 export function validateDutyIdentifiers(fillCard = {}) {
+  if (isWiringOrder(fillCard)) {
+    const value = String(fillCard.transactionNo ?? "").trim();
+    return [!value || value === "无" ? "" : validateTransactionNo(value), validateRoomTicketNo(fillCard.roomTicketNo)].filter(Boolean);
+  }
   if (isRackOrder(fillCard)) {
     const value = String(fillCard.transactionNo ?? "").trim();
     const match = value.match(/^SXJXQ(\d{8})(\d+)$/);
@@ -59,4 +63,8 @@ export function validateDutyIdentifiers(fillCard = {}) {
 export function isRackOrder(card = {}) {
   return String(card.source || "").trim() === "上下架"
     || /^SXJXQ/.test(String(card.transactionNo || "").trim());
+}
+
+export function isWiringOrder(card = {}) {
+  return String(card.source || "").replace(/[\s、，,]/g, "") === "布线理线";
 }
