@@ -14,12 +14,17 @@ export function evidenceRegions(items) {
   const regions = [];
   for (const label of rows.filter(r => /工作|描述|事项|姓名|机房.*编号|出入.*编号/.test(r.text) && !/工作.{0,1}态|工作流|工作台/.test(r.text))) {
     const h = Math.max(12, label.bottom - label.y);
-    const value = rows.filter(r => r.x >= label.right - 4 && r !== label && Math.abs(r.y - label.y) < h)
-      .sort((a, b) => a.x - b.x)[0];
-    if (!value || value.x - label.right > 500 || (Number.isFinite(value.score) && value.score >= 0.85)) continue;
-    regions.push({x: Math.max(0, label.x - 12), y: Math.max(0, Math.min(label.y, value.y) - h),
-      width: Math.min(1600, value.right - label.x + 36), height: Math.min(300, Math.max(label.bottom, value.bottom) - Math.min(label.y, value.y) + h * 3),
-      priority: (/具体|描述|事项|姓名/.test(label.text) ? 3 : /编号/.test(label.text) ? 2 : 1) + Math.min(value.text.length, 20) / 100,
+    const line = rows.filter(r => r.x >= label.right - 4 && r !== label && Math.abs(r.y - label.y) < h)
+      .sort((a, b) => a.x - b.x);
+    const nextLabel = line.find(r => /[:：]\s*$/.test(r.text));
+    const values = line.filter(r => !nextLabel || r.x < nextLabel.x);
+    if (!values.length || values[0].x - label.right > 500 || values.every(r => Number.isFinite(r.score) && r.score >= 0.85)) continue;
+    const x = Math.max(0, label.x - 12), top = Math.min(label.y, ...values.map(r => r.y));
+    // OCR may split one field into description, rack position and serial number.
+    const right = Math.min(Math.max(...values.map(r => r.right)) + 24, nextLabel?.x ?? Infinity);
+    regions.push({x, y: Math.max(0, top - h),
+      width: right - x, height: Math.min(300, Math.max(label.bottom, ...values.map(r => r.bottom)) - top + h * 3),
+      priority: (/具体|描述|事项|姓名/.test(label.text) ? 3 : /编号/.test(label.text) ? 2 : 1) + Math.min(values.reduce((n, r) => n + r.text.length, 0), 20) / 100,
       label: label.text});
   }
   const selected = [];

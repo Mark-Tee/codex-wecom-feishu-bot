@@ -21,6 +21,18 @@ test("invalid coordinates ignored; low scores remain explicitly uncertain", () =
   assert.deepEqual(evidenceRegions([row("具体工作描述",20,400,0.99),row("清晰描述",150,400,0.99)]),[]);
 });
 
+test("detail crop includes every same-line fragment, including a low-confidence suffix", () => {
+  const items = [row("具体工作描述：",20,400), row("清晰的前半句",150,400,0.99),
+    row("机架位置",270,402,0.98), row("设备编号",400,403,0.6),
+    row("姓名：",550,400), row("其他字段",680,400,0.5)];
+  const [region] = evidenceRegions(items);
+  assert(region.x + region.width >= 500, "must include the last description fragment");
+  assert(region.x + region.width < 550, "must stop before the next field");
+  const longLine = [row("具体工作描述：",20,400), row("模糊描述",150,400), row("末尾编号",1800,401)];
+  const [longRegion] = evidenceRegions(longLine);
+  assert(longRegion.x + longRegion.width >= 1900, "must not truncate wide fields at 1600px");
+});
+
 test("disabled or failed preparation retains original inputs", async () => {
   const message={images:[{path:"missing.jpg"}],ocrText:"原文"};
   assert.equal(await prepareImageEvidence(message,{}),message);
