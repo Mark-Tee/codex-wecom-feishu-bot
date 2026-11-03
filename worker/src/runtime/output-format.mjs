@@ -8,11 +8,11 @@ export function formatPendingTasks(tasks) {
   return [
     "**本会话未完成工单**",
     ...tasks.map((task) => (
-      `${task.id} · ${labels[task.status] || task.status} · ${task.operator || "未设置使用人"}${
+      `${task.id} · ${task.browserFill?.awaitingWriteApproval ? "识别完成，待本机核准写入" : labels[task.status] || task.status} · ${task.operator || "未设置使用人"}${
         task.browserFill?.ok ? " · 浏览器已填" : ""
       }`
     )),
-    tasks.some((task) => !["power-duty", "offsite-feishu"].includes(task.workflowMode)) ? "普通工单确认飞书已提交后发送：/done <短号>" : "仅飞书任务无需 /done。",
+    tasks.some((task) => !["power-duty", "offsite-feishu"].includes(task.workflowMode) && !task.browserFill?.requiresLocalReview) ? "普通工单确认飞书已提交后发送：/done <短号>" : tasks.some(task=>task.browserFill?.requiresLocalReview) ? "保护状态下请联系维护者核验，勿重复 /fill 或发送 /done。" : "仅飞书任务无需 /done。",
   ].join("\n");
 }
 
@@ -40,6 +40,7 @@ export function formatStatus({
 
 export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty = false, skipDraft = false } = {}) {
   if (!result?.configured) return "";
+  if(result.awaitingWriteApproval)return ["【识别已完成 · 等待写入许可】","字段已保存为本地待办；本次未打开飞书填写页面、未新增记录。","请联系维护者核准此单，勿重复发图、/fill 或 /done。"].join("\n");
   if(result.requiresReadback)return ["【飞书页面提示已提交】",result.taskNumber ? `任务列表：${result.taskNumber}` : "","尚待本机读回核对新增记录，不代表最终验收通过。","请勿重复建单或发送 /done。"].filter(Boolean).join("\n");
   if(result.requiresLocalReview)return ["【飞书共享表保护】",result.message,"请勿手工提交或重复 /fill；维护者只读核验后在本机处理。"].join("\n");
   const filled = (result.filled || []).join("、");

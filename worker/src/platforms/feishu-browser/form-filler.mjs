@@ -519,8 +519,9 @@ export class FeishuBrowserFormFiller {
       };
     }
     try {
-      stage = "open-browser";
+      stage = "write-approval";
       writeApproval=claimWriteApproval(this.config,task);
+      stage = "open-browser";
       const allowDuplicate=explicitDuplicateTest(writeApproval,task);
       if(dedup)orderJournal=reserveOrderAttempt(this.config,task,allowDuplicate);
       session = await this.sessionFactory(this.config);
@@ -740,6 +741,7 @@ export class FeishuBrowserFormFiller {
         timings: { ...timings, total: Date.now() - startedAt },
         diagnostics,
         message: error.message,
+        awaitingWriteApproval: stage === "write-approval",
         requiresLocalReview: Boolean(this.config.writeApprovalFile)||Boolean(error.requiresLocalReview)||Boolean(orderJournal),
         pageUrl: this.config.formUrl,
       };

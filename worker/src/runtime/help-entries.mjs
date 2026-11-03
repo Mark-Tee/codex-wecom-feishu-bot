@@ -5,7 +5,7 @@ export const HELP_ENTRIES = Object.freeze([
  {trigger:"/as",parameters:"姓名",description:"设置本会话工单使用人。",example:"/as 测试甲",limits:"换为本人准确姓名，需匹配配置成员。"},
  {trigger:"/pending",parameters:"",description:"查看本会话待办。",example:"/pending",limits:"仅显示本会话最近十条任务。"},
  {trigger:"/status",parameters:"",description:"查看运行状态。",example:"/status",limits:"不会执行工单写入。"},
- {trigger:"发送工单图片",parameters:"",description:"识别并创建飞书工单。",example:"发送清晰工单截图",limits:"需授权和有效登录；双号齐全按组合查重、缺一按已有号，重复业务单不新建；真实写入完整验收仍待完成；共享表测试保护开启时单独识别飞书字段，不依赖周报或交接表，新增带测试标记，待本机核准。"},
+ {trigger:"发送工单图片",parameters:"",description:"识别并创建飞书工单。",example:"发送清晰工单截图",limits:"识别完成后若提示等待写入许可，字段已保存、本次未写表，请联系维护者，不重复发图；需授权和有效登录；双号齐全按组合查重、缺一按已有号，重复业务单不新建；真实写入完整验收仍待完成；共享表测试保护开启时单独识别飞书字段，不依赖周报或交接表，新增带测试标记，待本机核准。"},
  {trigger:"/fill",parameters:"短号",description:"重试填写、核对并提交。",example:"/fill 12",limits:"真实写入待实单验收；仅本会话任务，已提交的不重复提交；并发或提交结果不明时先本机核验，禁止盲目重试；共享表测试保护开启时须本机单次许可，结果不明禁止重试。"},
  {trigger:"/done",parameters:"短号",description:"确认已提交后更新固定腾讯草稿。",example:"/done 12",limits:"真实写入待实单验收；动力值班无需此操作；共享表测试保护期间暂不写腾讯草稿。"},
  {trigger:"查看排班",parameters:"",description:"请发给排班机器人，实时查询今天和明天。",example:"@排班机器人 查看排班",limits:"只读；07:00推当天，17:00推次日。"},

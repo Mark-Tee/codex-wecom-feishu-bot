@@ -56,3 +56,9 @@ test("浏览器结果摘要区分提交、待核验和失败", () => {
     diagnostics: { code: "submit" },
   }), /失败阶段：submit/);
 });
+
+test("write approval block is recognition success and never suggests Tencent completion",()=>{
+ const result={configured:true,awaitingWriteApproval:true,requiresLocalReview:true};
+ assert.match(formatBrowserFillSummary(result),/识别已完成/);assert.match(formatBrowserFillSummary(result),/未新增记录/);
+ const text=formatPendingTasks([{id:"1",status:"ready",browserFill:result}]);assert.match(text,/待本机核准/);assert.doesNotMatch(text,/普通工单确认飞书已提交后发送/);
+});
