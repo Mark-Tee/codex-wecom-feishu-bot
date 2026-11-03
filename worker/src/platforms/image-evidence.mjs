@@ -51,6 +51,7 @@ export async function prepareImageEvidence(message, config, logger) {
     const cache = path.join(dir, hash + ".json");
     let data;
     try {data = JSON.parse(await fs.readFile(cache, "utf8"));} catch {}
+    // shortcut: bump cache version when the configured OCR engine/models change.
     if (data?.version !== 1 || data.hash !== hash) {
       const result = await run(config.ocr.executable, [`--image_path=${image.path}`, "--maxSideLen=2048", "--ensureLogger=0"],
         {cwd: path.dirname(config.ocr.executable), windowsHide: true, timeout: Math.min(config.ocr.timeoutMs || 20000, 20000), maxBuffer: 8 * 1024 * 1024});
@@ -65,7 +66,8 @@ export async function prepareImageEvidence(message, config, logger) {
       const regionHash = crypto.createHash("sha256").update(JSON.stringify(regions)).digest("hex").slice(0, 12);
       const outputs = regions.map((r, i) => ({...r, output: path.join(dir, `ocr-focus-${hash}-${regionHash}-${i}.png`)}));
       await fs.writeFile(plan, JSON.stringify(outputs));
-      await run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+      const ready = await Promise.all(outputs.map(async r => {try {return (await fs.stat(r.output)).size > 0;} catch {return false;}}));
+      if (!ready.every(Boolean)) await run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         fileURLToPath(new URL("./image-evidence.ps1", import.meta.url)), "-ImagePath", image.path, "-PlanPath", plan],
       {windowsHide: true, timeout: 10000});
       for (const r of outputs) if ((await fs.stat(r.output)).size > 0) crops.push({path: r.output, text: "同一原图的局部放大", derivedForOcr: true});
