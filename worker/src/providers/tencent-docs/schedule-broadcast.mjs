@@ -3,14 +3,13 @@ import { rosterNames } from "../../core/roster-names.mjs";
 import { auxiliaryPolicy } from "../../core/auxiliary-policy.mjs";
 import { colorMatches } from "../../core/duty-role.mjs";
 import { addDays, dateKey, shanghaiDate, sheetForDate } from "../../core/duty-date.mjs";
-import {checkRosterLeave,leaveCheckSummary} from "../../core/leave-policy.mjs";
 
 function column(n) {
   let result = "";
   while (n > 0) { result = String.fromCharCode(65 + (n - 1) % 26) + result; n = Math.floor((n - 1) / 26); }
   return result;
 }
-const clean = (value) => String(value).replace(/[\r\n<>`*_\[\]]/g, " ");
+const clean = (value) => String(value).replace(/（(?:原表空白，按排班规则|按前日夜班及空白排班)）/gu, "").replace(/[\r\n<>`*_\[\]]/g, " ");
 
 export function summarizeSchedule({ rows, styles, date, config }) {
   const headers = (rows[0] || []).map((v) => String(v).trim());
@@ -156,7 +155,6 @@ export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
         lines.push(`${label}：${clean(own.site)}`);
         for (const role of own.roles) lines.push(clean(role));
       } else lines.push(`${label}：${names(own.roles)}`);
-      if(own && day.groups && day.power)lines.push(`请假/调休：${leaveCheckSummary(checkRosterLeave(day,viewer,snapshot.offsite))}`);
     });
   } else if (viewer) lines.push("", "个人身份不在本次排班名单中，以下按全员视角展示，请核对排班身份。");
   snapshot.days.forEach((day, i) => {
@@ -195,7 +193,7 @@ export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
     }
     day.warnings.forEach((warning) => lines.push(`⚠ ${clean(warning)}`));
   });
-  lines.push("", "白班 08:30–17:30", "夜班 17:30–次日08:30", "白班辅值 09:00–15:00", "08:30前仍属前一天夜班。", "以上为排班，不代表实际出勤。", "待命人员仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "调班后可发送“查看排班”重新读取。");
+  lines.push("", "白班08:30–17:30；夜班17:30–次日08:30", "白班辅值09:00–15:00；08:30前属前夜班", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`);
   const text = lines.join("\n");
   if (Buffer.byteLength(text, "utf8") > 3900) throw new Error("排班通知过长，停止发送以免截断");
   return text;

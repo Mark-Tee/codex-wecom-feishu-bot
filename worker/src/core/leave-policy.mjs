@@ -16,8 +16,8 @@ export function checkRosterLeave(day, viewer, offsiteSite) {
 
 export function leaveCheckSummary(result) {
   return result.restricted ? `不能请假或调休（${result.reasons.join("、")}）`
-    : result.uncertain ? "待核对，原表有警告或班次未明确，不能据此判断可请假"
-      : result.restReason ? `${result.restReason}，不列为新的请假或调休候选日` : "未命中本条限制，不代表请假已批准";
+    : result.uncertain ? "待核对，暂不能判断"
+      : result.restReason ? `${result.restReason.replace(/（(?:原表空白，按排班规则|按前日夜班及空白排班)）/gu,"")}，不列新候选` : "未命中限制，不代表请假已批准";
 }
 
 export function leaveCheckDate(value, at) {

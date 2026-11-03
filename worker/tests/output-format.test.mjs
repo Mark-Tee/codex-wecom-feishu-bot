@@ -59,6 +59,11 @@ test("write approval block is recognition success and never suggests Tencent com
  const text=formatPendingTasks([{id:"1",status:"ready",browserFill:result}]);assert.match(text,/待本机核准/);assert.doesNotMatch(text,/普通工单确认飞书已提交后发送/);
 });
 
+test("success receipt keeps IDs and next action without the filled-field inventory",()=>{
+ const text=formatBrowserFillSummary({configured:true,submitted:true,taskNumber:"WD20261104001",filled:["任务列表","指派人员","陪同人"]},{taskId:"10"});
+ assert.match(text,/WD20261104001/);assert.match(text,/本地短号：10/);assert.match(text,/发送 \/done 10/);assert.doesNotMatch(text,/已填：|指派人员|陪同人/);assert.ok(text.split("\n").length<=4);
+});
+
 test("each write outcome gives a safe next action and concrete local ID", () => {
  const options={taskId:"10"};
  for(const result of [

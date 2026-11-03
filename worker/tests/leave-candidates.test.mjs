@@ -35,6 +35,7 @@ test("one month uses five reads, isolates individual bad days and preserves phys
  const kind=d=>result.entries.find(e=>e.date===`202611${String(d).padStart(2,"0")}`).kind;
  for(const d of [2,3,6])assert.equal(kind(d),"restricted");for(const d of [4,5,11])assert.equal(kind(d),"rest");for(const d of [8,9,10])assert.equal(kind(d),"pending");assert.equal(kind(7),"candidate");
  assert.match(result.text,/可考虑的工作日：21天/);assert.match(result.text,/不代表已批准/);assert.match(result.text,/过去日期仅作排班回看/);assert.equal(Object.values(result.counts).reduce((a,b)=>a+b),30);
+ assert.doesNotMatch(result.text,/下一步|按前日夜班及空白排班/);assert.ok(result.text.split("\n").length<=30);
 });
 test("invalid month is rejected before network and missing published month is never replaced by old data",async()=>{
  const f=fixture();await assert.rejects(readLeaveCandidates({...f,at:new Date(),viewer:"丁",month:"2026-13"}),/月份/);assert.equal(f.reads(),0);
@@ -47,7 +48,7 @@ test("candidate classification requires explicit white duty and never counts exi
 
 test("daily leave reply recognizes blank rest and gives the matching next step",async()=>{
  const f=fixture(),text=await readLeaveCheck({...f,at:new Date("2026-11-03T09:00:00+08:00"),viewer:"丁",date:"2026-11-05"});
- assert.match(text,/休息（原表空白，按排班规则）/);assert.match(text,/不需要把它作为新的请假或调休日期/);assert.doesNotMatch(text,/结果：待核对/);assert.equal(f.reads(),5);
+ assert.match(text,/结果：休息，不列新候选/);assert.doesNotMatch(text,/下一步|结果：待核对/);assert.equal(f.reads(),5);
 });
 
 test("the same blank-row color mapping is preserved in ordinary work-order roster context",async()=>{

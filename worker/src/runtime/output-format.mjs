@@ -1,5 +1,5 @@
 export function formatPendingTasks(tasks) {
-  if (!tasks.length) return "本会话没有未完成的本地工单。\n下一步：有新工单时直接发送清晰图片。";
+  if (!tasks.length) return "本会话没有未完成工单。";
   const labels = {
     ready: "待飞书提交",
     failed: "上次写入失败",
@@ -7,7 +7,7 @@ export function formatPendingTasks(tasks) {
   };
   return [
     "**本会话未完成工单**",
-    "短号是机器人待办编号，不是飞书单号。",
+    "短号为本地编号。",
     ...tasks.map((task) => {
       let next = `联系维护者核对短号 ${task.id} 的飞书提交状态，暂不发送 /done。`;
       if (task.browserFill?.requiresReadback || task.browserFill?.requiresLocalReview || task.status === "failed") next = `将短号 ${task.id} 告知维护者核验，暂时无需操作。`;
@@ -49,7 +49,7 @@ export function formatStatus({
 
 export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty = false, skipDraft = false, taskId = "", testOnly = false } = {}) {
   if (!result?.configured) return "";
-  const localId = taskId ? `本地短号：${taskId}（机器人待办编号，不是飞书单号）` : "";
+  const localId = taskId ? `本地短号：${taskId}（不是飞书单号）` : "";
   if(result.awaitingWriteApproval)return ["【识别已完成 · 等待写入许可】",localId,"字段已保存为本地待办；本次未打开飞书填写页面、未新增记录。","下一步：把这条回复转给维护者，等待本机核验；你暂时无需操作，不要重复发图或发送 /fill、/done。"].filter(Boolean).join("\n");
   if(result.requiresReadback)return ["【飞书页面提示已提交】",localId,result.taskNumber ? `任务列表：${result.taskNumber}` : "","尚待本机读回核对新增记录，不代表最终验收通过。","下一步：等待维护者核验结果，你暂时无需操作，不要重复建单或发送 /done。"].filter(Boolean).join("\n");
   if(result.requiresLocalReview)return [result.message?.includes("相同业务工单已在飞书存在") ? "【工单重复 · 未新增】" : "【飞书共享表保护】",localId,result.message,"下一步：联系维护者核对已有记录或处理结果；你暂时无需操作，不要手工提交或发送 /fill、/done。"].filter(Boolean).join("\n");
@@ -60,7 +60,6 @@ export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty
       "**飞书已自动核对并提交**",
       localId,
       result.taskNumber ? `任务列表：${result.taskNumber}` : "",
-      `已填：${filled || "无"}`,
       testOnly ? "下一步：等待维护者核验测试记录；本次只测试飞书，不写腾讯草稿，你无需发送 /done。" : powerDuty ? "下一步：无需操作。动力值班仅建飞书单，不生成腾讯草稿。" : skipDraft ? "下一步：无需操作。当日异地安排，不生成本地站点草稿。" : `下一步：发送 /done ${taskId || "<短号>"}，生成腾讯周报和交接草稿。`,
     ].filter(Boolean).join("\n");
   }
@@ -69,7 +68,6 @@ export function formatBrowserFillSummary(result, { autoSubmit = false, powerDuty
       "**飞书浏览器已填写并通过核对**",
       localId,
       result.taskNumber ? `任务列表：${result.taskNumber}` : "",
-      `已填：${filled || "无"}`,
       autoSubmit
         ? "下一步：联系维护者检查浏览器，尚未确认提交成功，请勿重发工单或发送 /done。"
         : `下一步：请核对后手工点击提交。确认提交成功后${powerDuty || skipDraft || testOnly ? "无需 /done。" : `发送 /done ${taskId || "<短号>"}。`}`,

@@ -9,6 +9,7 @@ test("remote management and source edits are denied before business routing",()=
 test("mobile menus have short lines, no management commands, and honest write status",()=>{
  for(const menu of [ROSTER_HELP,TICKET_HELP]){assert.doesNotMatch(menu,/\/(?:invite|pair|revoke|operators|stop|cancel|new)\b|绑定排班群|解绑排班群|删除 </);assert.ok(menu.split("\n").every(line=>[...line].length<=32));}
  assert.match(TICKET_HELP,/真实写入待实单验收/);
+ for(const menu of [ROSTER_HELP,TICKET_HELP]){assert.ok(menu.length<700);assert.ok(menu.split("\n").length<=28);}
  for(const cmd of ["/as 测试甲","/pending","/fill 12","/done 12"])assert.equal(ticketRoute(cmd),"worker");
  for(const cmd of ["/help","/status"])assert.equal(ticketRoute(cmd),"local");
 });

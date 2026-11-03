@@ -55,14 +55,13 @@ export function formatPowerHandoff({slot, people, records, settings, generatedAt
   const categories=Object.fromEntries([...new Set([...rules.map(rule=>clean(rule.category)),"待核对分类"])].filter(name=>counts.has(name)).map(name=>[name,counts.get(name)]));
   const date = slot.handoverDate;
   const generated = new Intl.DateTimeFormat("zh-CN", {timeZone:"Asia/Shanghai",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(generatedAt);
-  const text = ["【动力交班模拟草稿】", `生成及统计截至：${generated}。交班前请复核新增任务和人员。`, "下文保留模板措辞，不代表实际已完成交接班。", "",
+  const text = ["【动力交班模拟草稿】", `统计截至：${generated}；不代表实际已完成交接班。`, "",
     `${date.slice(4,6)}月${date.slice(6,8)}日，截至${slot.handoverTime}，合肥IDC动力值班已完成交接班。`,
     `${date}${people.nextKind === "white" ? "白班" : "夜班"}合肥IDC${clean(settings.siteName)}值班：${clean(people.nextPower)}  在岗：${people.onSite.map(clean).join("、") || "无其他排班人员"}`,
     `合肥IDC动力值班${slot.kind === "white" ? "白班" : "夜班"}共处理${total}个任务单。`,
     `（${Object.entries(categories).map(([name,count]) => `${name}${count}次`).join("，") || "截至生成时刻暂无登记任务"}）`, "",
     uncertain.length ? `待核对任务：${uncertain.join("、")}` : "",
-    "下一步：交班前核对任务、分类、接班人员和实际交接状态，修正后再发群；本消息不会自动发群或写表。",
-    "统计按当班已登记任务，不代表每项工作均已完成。",
+    "交班前复核人员、任务及实际完成情况，再发群。",
   ].filter((line,index,all) => line || all[index-1] !== "").join("\n");
   return {text, total, categories, uncertain:[...new Set(uncertain)], duplicates, excludedTests};
 }
