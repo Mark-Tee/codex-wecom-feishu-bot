@@ -12,8 +12,22 @@ function normalizeTaskId(value) {
 }
 
 function sameChat(task, chatId) {
-  return String(task.chatId) === String(chatId);
+
+  if (String(task.chatId) === String(chatId)) return true;
+
+  // Legacy tasks have an explicit owner; unowned shared history is never adopted.
+
+  try {
+
+    const [platform, group, user] = JSON.parse(chatId);
+
+    return platform === "wecom" && task.chatId === group && task.userId === user;
+
+  } catch { return false; }
+
 }
+
+
 
 export class PendingTaskStore {
   constructor(state, { now = () => Date.now(), processingStaleMs = PROCESSING_STALE_MS } = {}) {

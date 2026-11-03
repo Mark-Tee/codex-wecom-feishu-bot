@@ -131,9 +131,10 @@ test("端到端外派工单只建飞书，误发/done不会写本地工作草稿
       await new Promise((r) => setTimeout(r, 5));
     }
   };
+  await handle("/as 网络甲");
   await handle("工单 2026-11-02 09:00");
   await handle("/done 1");
   assert.equal(writes, 0);
   assert.ok(replies.some((s) => s.includes("无需 /done")));
-  assert.equal(pendingTasks.find("1", "test").status, "completed");
+  assert.equal(pendingTasks.find("1", JSON.stringify(["wecom","test","test"])).status, "completed");
 });

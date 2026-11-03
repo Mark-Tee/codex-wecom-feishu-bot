@@ -47,7 +47,7 @@ test("configuration preserves approval gate through normalization",()=>fixture((
 }));
 test("test mode rejects Tencent completion before any write or queue action",async()=>{
  const replies=[];const service=new ConversationService({config:{feishuBrowser:{writeApprovalFile:"local-permit"}},dutyConfig:{},state:{get:()=>[],set(){throw Error("must not mutate");}},access:{isAuthorized(){throw Error("must not reach");}}});
- await service.handle({text:"/done 1"},{replyText:async text=>replies.push(text)});assert.match(replies[0],/腾讯草稿暂不写入/);assert.equal(service.queue.size,0);
+ await service.handle({text:"/done 1",chatId:"test",userId:"test"},{replyText:async text=>replies.push(text)});assert.match(replies[0],/腾讯草稿暂不写入/);assert.equal(service.queue.size,0);
 });
 
 test("shared-table success banner is not presented as verified final acceptance",()=>{

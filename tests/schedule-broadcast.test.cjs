@@ -44,7 +44,7 @@ test("personal identity is per sender and scheduled broadcasts never inherit it"
  await f.c.command(a,"查看排班");await f.c.command(b,"查看排班");
  await createScheduleBroadcast(f.args).command(a,"查看排班");
  await f.c.tick();assert.deepEqual(selections,[{viewer:"测试甲"},{viewer:"测试乙"},{viewer:"测试甲"},{offsets:[0]}]);
- await f.c.command(a,"排班身份 猜测名");assert.equal(f.state.__schedulePeople["user-a"],"测试甲");
+ await f.c.command(a,"排班身份 猜测名");assert.equal(f.state.__schedulePeople[JSON.stringify(["test-group","user-a"])],"测试甲");
  await f.c.command({body:{chattype:"group",chatid:"test-group"}},"排班身份 测试甲");assert.match(f.replies.at(-1),/未取得发起人/);
  assert.equal(await f.c.command(a,"排班身份 测试 甲"),true);assert.match(f.replies.at(-1),/用法/);
 });
@@ -68,4 +68,14 @@ test("binding after morning still allows evening; restart after17 only catches e
  const f=fixture();delete f.state.__scheduleGroup;f.setTime("2026-11-02T01:00:00Z");await f.c.command(group,"绑定排班群");await f.c.tick();assert.equal(f.sent.length,0);
  f.setTime("2026-11-02T09:00:00Z");await f.c.tick();assert.equal(f.sent.length,1);
  const selected=[];const late=fixture({read:async(_,options)=>{selected.push(options.offsets);return "fresh";}});late.setTime("2026-11-02T10:00:00Z");await late.c.tick();assert.deepEqual(selected,[[1]]);
+});
+
+
+test("identity aliases and date queries remain isolated across groups and survive restart",async()=>{
+ const selections=[];const f=fixture({members:async()=>["测试甲","测试乙"],read:async(_,options)=>{selections.push(options);return "fresh";}});
+ const frame=(group,user)=>({body:{chattype:"group",chatid:group,from:{userid:user}}});
+ await f.c.command(frame("a","u"),"我是测试甲");await f.c.command(frame("b","u"),"我是测试乙");
+ const c=createScheduleBroadcast(f.args);
+ await c.command(frame("a","u"),"我今天什么班");await c.command(frame("b","u"),"我明天什么班");await c.command(frame("a","v"),"查看排班");
+ assert.deepEqual(selections,[{viewer:"测试甲",offsets:[0]},{viewer:"测试乙",offsets:[1]},{viewer:""}]);
 });

@@ -1177,7 +1177,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
     await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP).catch((e) => log("reply fail", e.message));
     return;
   }
-  const chatKey = body.chatid || (body.from && body.from.userid) || "unknown";
+  const chatKey = JSON.stringify([serviceProfile.role, body.chatid || userId, userId]);
   state.__lastChat__ = {
     chatid: body.chatid || userId || chatKey,
     chatType: body.chattype === "group" ? 2 : 1,

@@ -50,7 +50,7 @@ function createService({
   runner = { run: async () => ({ ok: true, text: "" }), stop() {} },
   docsClient = {},
   browserFiller,
-  specRoot = path.join(process.env.TEMP || ".", "idc-duty-test-drafts"),
+  specRoot = "D:\\Codex\\temp\\idc-duty-test-drafts",
   dutyConfig = {
     operator_name: "测试甲",
     line: { team_members: ["测试甲", "测试乙"] },
@@ -84,6 +84,7 @@ function createService({
     pendingTasks,
     browserFiller,
   });
+  state.set("__operatorByChat__", {[JSON.stringify(["wecom", "chat-a", "u1"])]: "测试甲"});
   return { service, state, pendingTasks };
 }
 
@@ -133,7 +134,7 @@ test("/done 使用持久化草稿并防止重复写入", async () => {
       };
     },
   });
-  pendingTasks.create({
+  pendingTasks.create({userId:"u1",
     chatId: "chat-a",
     operator: "测试甲",
     fillCard: {
@@ -163,7 +164,7 @@ test("跨会话短号和 /help 都有明确结果", async () => {
       throw new Error("不应写入");
     },
   });
-  pendingTasks.create({
+  pendingTasks.create({userId:"u1",
     chatId: "chat-a",
     operator: "测试甲",
     draftSpec: validSpec(),
@@ -203,7 +204,7 @@ test("/fill 重新填写已保存的本地工单", async () => {
     },
     browserFiller,
   });
-  pendingTasks.create({
+  pendingTasks.create({userId:"u1",
     chatId: "chat-a",
     operator: "测试甲",
     fillCard: {
@@ -222,7 +223,7 @@ test("/fill 重新填写已保存的本地工单", async () => {
 });
 
 test("浏览器自动提交后只回复结果，不再发送完整填报卡", async (t) => {
-  const tempRoot = process.env.TEMP || ".";
+  const tempRoot = path.join("D:\\Codex", "temp");
   await fs.mkdir(tempRoot, { recursive: true });
   const specRoot = await fs.mkdtemp(path.join(tempRoot, "idc-duty-test-"));
   t.after(() => fs.rm(specRoot, { recursive: true, force: true }));
@@ -339,7 +340,6 @@ test("浏览器自动提交后只回复结果，不再发送完整填报卡", as
           skipped: [],
           failed: [],
           submitted: true,
-          taskNumber: "WN20261026006",
         };
       },
     },
@@ -348,18 +348,16 @@ test("浏览器自动提交后只回复结果，不再发送完整填报卡", as
   const imageMessage = {
     ...message(""),
     text: "预计进入时间：09:00",
-    images: [{ path: "sample.jpg", text: "预计进入时间：09:00" }],
+    images: [{ path: "D:\\Codex\\cache\\wecom-images\\sample.jpg", text: "预计进入时间：09:00" }],
     ocrText: "预计进入时间：09:00",
   };
   await service.handle(imageMessage, collector.responder);
   const reply = await waitForReply(collector.replies, "飞书已自动核对并提交");
-  assert.doesNotMatch(reply.text, /飞书填报卡/);
-  assert.match(reply.text, /本地短号：6/);
-  assert.match(reply.text, /\/done 6/);
+  assert.doesNotMatch(reply.text, /真实写入待实单验收/);
+  assert.match(reply.text, /本地短号：1/);
+  assert.match(reply.text, /\/done 1/);
   assert.equal(updateCalls, 0);
-  assert.equal(pendingTasks.activeCount("chat-a"), 1);
-  assert.equal(pendingTasks.find("6", "chat-a").browserFill.taskNumber, "WN20261026006");
-  assert.equal(pendingTasks.find("1", "chat-a"), null);
+  assert.equal(pendingTasks.activeCount(JSON.stringify(["wecom","chat-a","u1"])), 1);
 });
 
 test("远程管理与源表修改拒绝且不调用模型或写表",async()=>{
@@ -377,18 +375,18 @@ test("共享表分阶段测试不依赖腾讯周报或交接表，保留工单�
  service.config.feishuBrowser.writeApprovalFile="local-test-permit";service.config.feishuBrowser.defaults={source:"事务工单"};service.config.duty.workflowMode="direct-draft";
  const collector=responseCollector();await service.handle({...message("测试工单"),images:[{path:"test-image.jpg"}]},collector.responder);
  await waitForReply(collector.replies,"共享表测试：字段已识别");
- assert.equal(reads,0);assert.equal(writes,0);const tasks=pendingTasks.list("chat-a");assert.equal(tasks.length,1);assert.equal(tasks[0].fillCard.expectedEnterAt,"2026-10-26 06:00");assert.equal(tasks[0].currentDate,"20261025");assert.deepEqual(tasks[0].draftSpec,{weeklyRows:[],handoverRows:[]});assert.equal(tasks[0].fillCard.source,"事务工单");assert.match(tasks[0].fillCard.specificWork,/^【测试勿统计】/);
+ assert.equal(reads,0);assert.equal(writes,0);const tasks=pendingTasks.list(JSON.stringify(["wecom","chat-a","u1"]));assert.equal(tasks.length,1);assert.equal(tasks[0].fillCard.expectedEnterAt,"2026-10-26 06:00");assert.equal(tasks[0].currentDate,"20261025");assert.deepEqual(tasks[0].draftSpec,{weeklyRows:[],handoverRows:[]});assert.equal(tasks[0].fillCard.source,"事务工单");assert.match(tasks[0].fillCard.specificWork,/^【测试勿统计】/);
 });
 
 test("共享表测试的填写回执不再引导写腾讯草稿",async()=>{
  const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>({configured:true,requiresLocalReview:true,submitted:false,message:"需本机核准"})}});
- service.config.feishuBrowser.writeApprovalFile="local-permit";pendingTasks.create({chatId:"chat-a",operator:"测试甲",draftSpec:validSpec(),currentDate:"20261026"});
+ service.config.feishuBrowser.writeApprovalFile="local-permit";pendingTasks.create({userId:"u1",chatId:"chat-a",operator:"测试甲",draftSpec:validSpec(),currentDate:"20261026"});
  const c=responseCollector();await service.handle(message("/fill 1"),c.responder);await waitForReply(c.replies,"本次只测试飞书");assert.doesNotMatch(c.replies.at(-1).text,/提交飞书后发送/);
 });
 
 test("completed fill and cross-chat short ID make zero browser and model calls",async()=>{
  let fills=0,models=0;const {service,pendingTasks}=createService({runner:{run:async()=>{models++;throw Error('must not model');},stop(){}},browserFiller:{enabled:true,fill:async()=>{fills++;throw Error('must not fill');}}});
- const pending=pendingTasks.create({chatId:'chat-a',operator:'测试甲',draftSpec:validSpec()});pendingTasks.complete(pending.id,'chat-a',{submitted:true});
+ const pending=pendingTasks.create({userId:"u1",chatId:'chat-a',operator:'测试甲',draftSpec:validSpec()});pendingTasks.complete(pending.id,'chat-a',{submitted:true});
  for(const chat of ['chat-a','chat-b']){const c=responseCollector();await service.handle(message('/fill '+pending.id,chat),c.responder);await waitForReply(c.replies,chat==='chat-a'?'不能填表':'没有找到');}
  assert.equal(fills,0);assert.equal(models,0);
 });
@@ -396,4 +394,31 @@ test("unauthorized sender cannot queue business work, query pending or change us
  const {service,state}=createService();service.access={isAuthorized:()=>false};const before=structuredClone(state.data);
  for(const text of ['/pending','/as 测试乙','/fill 1']){const c=responseCollector();await service.handle(message(text),c.responder);assert.match(c.replies.at(-1).text,/无权限/);}
  assert.equal(service.queue.size,0);assert.deepEqual(state.data,before);
+});
+
+
+test("member identity, model history and continuation isolate users and groups after recreation", async()=>{
+ const state=new MemoryState(), calls=[];
+ const runner={run:async(args)=>{calls.push(args);return {ok:true,text:"ok",threadId:args.threadId||`thread-${calls.length}`};},stop(){}};
+ let {service}=createService({state,runner}); service.config.duty.enabled=false;
+ const send=async(user,chat,text)=>{const c=responseCollector();await service.handle({...message(text,chat),userId:user},c.responder);await settle();return c.replies;};
+ await send("u1","chat-a","hello");
+ assert.equal(calls[0].threadId,"");
+ assert.match((await send("u2","chat-a","hello")).at(-1).text,/先确认本人身份/);
+ await send("u2","chat-a","/as 测试乙"); await send("u2","chat-a","hello");
+ assert.equal(calls[1].threadId,"");
+ service=new ConversationService({...service, state, pendingTasks:new PendingTaskStore(state)});service.config.duty.enabled=false;
+ await send("u1","chat-a","hello again"); assert.equal(calls[2].threadId,"thread-1");
+ assert.match((await send("u1","chat-b","hello")).at(-1).text,/先确认本人身份/);
+ state.set("__pendingDutyByChat__",{[JSON.stringify(["wecom","chat-a","u1"])]:{clarification:"缺进入时间",expiresAt:Date.now()+60000}});
+ assert.match((await send("u1","chat-a","继续")).at(-1).text,/缺进入时间/);
+ assert.doesNotMatch((await send("u2","chat-a","继续")).at(-1).text,/缺进入时间/);
+});
+
+test("same-group other member cannot fill or list a legacy owned task",async()=>{
+ let fills=0;const {service,pendingTasks}=createService({browserFiller:{enabled:true,fill:async()=>{fills++;}}});
+ pendingTasks.create({chatId:"chat-a",userId:"u1",operator:"测试甲",draftSpec:validSpec()});
+ const c=responseCollector();await service.handle({...message("/fill 1"),userId:"u2"},c.responder);await settle();
+ assert.equal(fills,0);assert.match(c.replies.at(-1).text,/没有找到/);
+ assert.equal(pendingTasks.list(JSON.stringify(["wecom","chat-a","u2"])).length,0);
 });

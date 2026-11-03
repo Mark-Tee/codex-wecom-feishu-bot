@@ -13,7 +13,6 @@ import {
   normalizeDutySpec,
   validateDutySpec,
 } from "../core/duty-spec.mjs";
-import { taskNumberToShortId } from "../core/task-workflow.mjs";
 import {
   inferFillCardFromSpec,
   formatFillCard,
@@ -34,6 +33,7 @@ import {
   formatPendingTasks,
   formatStatus,
 } from "./output-format.mjs";
+import { taskNumberToShortId } from "../core/task-workflow.mjs";
 import { PendingTaskStore } from "./pending-task-store.mjs";
 import { TaskQueue } from "./task-queue.mjs";
 
@@ -80,6 +80,10 @@ export class ConversationService {
   }
 
   async handle(message, responder) {
+    if (!message.userId || !message.chatId || message.userId === "unknown") {
+      await responder.replyText("无法识别发起人，未处理任务，请重新发送。"); return;
+    }
+    message = {...message, sessionId: JSON.stringify([message.platform || "wecom", message.chatId, message.userId])};
     const text = String(message.text || "").trim();
     if(this.config.feishuBrowser?.writeApprovalFile && /^\/done(?:\s|$)/iu.test(text)){
       await responder.replyText("当前为飞书共享表单条测试，腾讯草稿暂不写入，请先完成本机核验。");return;
@@ -116,10 +120,10 @@ export class ConversationService {
         startedAt: this.startedAt,
         queueSize: this.queue.size,
         queueRunning: this.queue.running,
-        operator: this.#operatorForChat(message.chatId),
+        operator: this.#operatorForChat(message.sessionId),
         workflowMode: this.config.duty.workflowMode,
         browserEnabled: this.browserFiller?.enabled,
-        pendingCount: this.pendingTasks.activeCount(message.chatId),
+        pendingCount: this.pendingTasks.activeCount(message.sessionId),
       }));
       return;
     }
@@ -130,7 +134,7 @@ export class ConversationService {
       return;
     }
     if (text === "/new" || text === "新会话") {
-      this.#setChatValue("threads", message.chatId, "");
+      this.#setChatValue("threads", message.sessionId, "");
       await responder.replyText("已清空当前会话上下文，使用人身份保留。");
       return;
     }
@@ -159,7 +163,7 @@ export class ConversationService {
       return;
     }
     if (text === "/pending" || text === "待办") {
-      await responder.replyText(formatPendingTasks(this.pendingTasks.list(message.chatId)));
+      await responder.replyText(formatPendingTasks(this.pendingTasks.list(message.sessionId)));
       return;
     }
     const fill = text.match(/^\/fill(?:\s+#?(\d{1,8}))?$/i);
@@ -179,7 +183,7 @@ export class ConversationService {
     }
     const cancel = text.match(/^\/cancel(?:\s+#?(\d{1,8}))?$/i);
     if (cancel) {
-      await responder.replyText(this.#cancelTask(message.chatId, cancel[1]));
+      await responder.replyText(this.#cancelTask(message.sessionId, cancel[1]));
       return;
     }
 
@@ -189,6 +193,14 @@ export class ConversationService {
       message = { ...message, text: identity.cleanedText };
     }
 
+    if (text === "继续" || text === "继续处理") {
+      const waiting = this.#getChatValue("pendingDuty", message.sessionId);
+      await responder.replyText(waiting ? `你有一张待补充信息的工单：\n${waiting.clarification || "请补充处理条件"}\n回复：补充 具体内容` : formatPendingTasks(this.pendingTasks.list(message.sessionId)));
+      return;
+    }
+    if (!this.#getChatValue("operator", message.sessionId)) {
+      await responder.replyText("请先确认本人身份：发送 /as 姓名，例如 /as 测试甲（换为本人）。每个群单独设置，不使用他人的默认身份。"); return;
+    }
     const pendingDuty = await this.#handlePendingDuty(message, responder);
     if (pendingDuty.handled) return;
     if (pendingDuty.task) message = pendingDuty.task;
@@ -200,7 +212,7 @@ export class ConversationService {
         : "general",
       message,
       responder,
-      operator: this.#operatorForChat(message.chatId),
+      operator: this.#operatorForChat(message.sessionId),
     };
     await this.#enqueue(task, responder);
   }
@@ -219,26 +231,26 @@ export class ConversationService {
 
   async #handleIdentity(message, text, responder) {
     const members = this.dutyConfig.line.team_members;
-    const pending = this.#getChatValue("operatorConfirm", message.chatId);
+    const pending = this.#getChatValue("operatorConfirm", message.sessionId);
     if (pending?.expiresAt > Date.now()) {
       if (/^(是|是的|对|对的|没错|确定|嗯)$/i.test(text)) {
-        this.#setChatValue("operator", message.chatId, pending.name);
-        this.#setChatValue("operatorConfirm", message.chatId, null);
+        this.#setChatValue("operator", message.sessionId, pending.name);
+        this.#setChatValue("operatorConfirm", message.sessionId, null);
         await responder.replyText(`已确认，本会话使用人切换为：${pending.name}\n请继续发送工单。`);
         return { handled: true };
       }
       if (/^(不是|不对|否|错了|不正确)$/i.test(text)) {
-        this.#setChatValue("operatorConfirm", message.chatId, null);
+        this.#setChatValue("operatorConfirm", message.sessionId, null);
         await responder.replyText(`请重新发送正确姓名，可选：${members.join("、")}`);
         return { handled: true };
       }
-      this.#setChatValue("operatorConfirm", message.chatId, null);
+      this.#setChatValue("operatorConfirm", message.sessionId, null);
     }
 
     const request = parseOperatorRequest(text);
     if (!request) return { handled: false };
     if (members.includes(request.name)) {
-      this.#setChatValue("operator", message.chatId, request.name);
+      this.#setChatValue("operator", message.sessionId, request.name);
       if (message.images?.length) {
         return {
           handled: false,
@@ -254,7 +266,7 @@ export class ConversationService {
       this.dutyConfig.line.pinyin_hints || {},
     );
     if (likelyOperatorMatch(matched)) {
-      this.#setChatValue("operatorConfirm", message.chatId, {
+      this.#setChatValue("operatorConfirm", message.sessionId, {
         name: matched.best.name,
         expiresAt: Date.now() + 5 * 60 * 1000,
       });
@@ -267,26 +279,28 @@ export class ConversationService {
 
   async #handlePendingDuty(message, responder) {
     if (message.images?.length) return { handled: false };
-    const pending = this.#getChatValue("pendingDuty", message.chatId);
+    const pending = this.#getChatValue("pendingDuty", message.sessionId);
     if (!pending || pending.expiresAt < Date.now()) return { handled: false };
     const text = String(message.text || "").trim();
     if (/^(取消|撤销|算了|不记了)$/i.test(text)) {
-      this.#setChatValue("pendingDuty", message.chatId, null);
+      this.#setChatValue("pendingDuty", message.sessionId, null);
       await responder.replyText("已取消这条工单的草稿记录。");
       return { handled: true };
     }
     let supplement = "";
-    if (/^(直接记录|按计划预录|按计划记录|计划预录)$/i.test(text)) {
+    if (/^补充\s+\S/.test(text)) {
+      supplement = text.replace(/^补充\s+/, "");
+    } else if (/^(直接记录|按计划预录|按计划记录|计划预录)$/i.test(text)) {
       supplement = "按计划时间预录，任务反馈写未开始，结束时间使用工单要求结束时间。";
     } else if (/^(按当前进展|记录当前进展|当前进展)$/i.test(text)) {
       supplement = "按当前进展记录，结束时间使用收到时间，任务反馈写处理中。";
     } else if (/^(已完成|按已完成记录|完成记录)$/i.test(text)) {
       supplement = "按已完成记录，结束时间使用收到时间与要求结束时间中较早者。";
     } else {
-      await responder.replyText("请明确：按计划预录、按当前进展记录、已完成，或取消记录。");
+      await responder.replyText("请发送“补充 内容”回答待确认问题，或选择按计划预录、按当前进展记录、已完成。");
       return { handled: true };
     }
-    this.#setChatValue("pendingDuty", message.chatId, null);
+    this.#setChatValue("pendingDuty", message.sessionId, null);
     return {
       handled: false,
       task: {
@@ -346,7 +360,7 @@ export class ConversationService {
     });
     const warning = context.schedule.flatMap((day) => day.warnings || [])[0];
     if (warning) {
-      this.#setChatValue("pendingDuty", message.chatId, {
+      this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
@@ -366,17 +380,17 @@ export class ConversationService {
     });
     const result = await this.runner.run({
       prompt,
-      threadId: this.state.get("__dutyThread__", ""),
+      threadId: this.#getChatValue("dutyThreads", message.sessionId) || "",
       images: message.images.map((image) => image.path),
       reasoningEffort: this.config.duty.reasoningEffort,
       fastDuty: true,
     });
-    if (result.threadId) this.state.set("__dutyThread__", result.threadId);
+    if (result.threadId) this.#setChatValue("dutyThreads", message.sessionId, result.threadId);
     if (!result.ok) throw new Error(result.text);
 
     const parsed = extractDutyJson(result.text);
     if (!parsed) {
-      this.#setChatValue("pendingDuty", message.chatId, {
+      this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
@@ -387,7 +401,7 @@ export class ConversationService {
       return;
     }
     if (parsed.needsClarification) {
-      this.#setChatValue("pendingDuty", message.chatId, {
+      this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
@@ -438,7 +452,7 @@ export class ConversationService {
       fs.writeFileSync(path.join(taskDir, "draft-spec.json"), JSON.stringify(normalized, null, 2), "utf8");
     }
     const currentDate = feishuTest ? resolveTaskShiftForWorkOrder({expectedEnterAt:fillCard.expectedEnterAt,receivedAt}).date : powerOnly ? powerDuty.date : inferShiftDateFromSpec(normalized, context);
-    this.#setChatValue("pendingDuty", message.chatId, null);
+    this.#setChatValue("pendingDuty", message.sessionId, null);
 
     if (!feishuTest && !powerOnly && !sitePolicy.skipHomeDraft && this.config.duty.workflowMode === "direct-draft") {
       const update = await this.draftRepository.update(normalized, {
@@ -457,7 +471,7 @@ export class ConversationService {
     }
 
     let pending = this.pendingTasks.create({
-      chatId: message.chatId,
+      chatId: message.sessionId,
       userId: message.userId,
       operator,
       receivedAt,
@@ -479,8 +493,8 @@ export class ConversationService {
     let browserResult = null;
     if (this.browserFiller?.enabled && this.config.feishuBrowser?.autoFill !== false) {
       browserResult = await this.browserFiller.fill(pending);
-      pending = this.#reassignTaskIdFromBrowser(pending, message.chatId, browserResult);
-      this.pendingTasks.setBrowserFill(pending.id, message.chatId, browserResult);
+      pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, browserResult);
+      this.pendingTasks.setBrowserFill(pending.id, message.sessionId, browserResult);
       browserStatus = formatBrowserFillSummary(browserResult, {
         autoSubmit: this.config.feishuBrowser?.autoSubmit,
       });
@@ -519,7 +533,7 @@ export class ConversationService {
 
   async #finishOffsiteFill(pending, result, message, responder, streamId) {
     if (result?.submitted && result.verification?.ok && !result.requiresReadback) {
-      this.pendingTasks.complete(pending.id, message.chatId, { workflowMode: "offsite-feishu", taskNumber: result.taskNumber });
+      this.pendingTasks.complete(pending.id, message.sessionId, { workflowMode: "offsite-feishu", taskNumber: result.taskNumber });
     }
     await responder.replyProgress(streamId, [
       `当日排班：${pending.siteAssignment.slot} · ${pending.siteAssignment.site} · ${pending.siteAssignment.assignmentType}`,
@@ -531,7 +545,7 @@ export class ConversationService {
 
   async #finishPowerFill(pending, result, message, responder, streamId) {
     if (result?.submitted && result.verification?.ok && !result.requiresReadback) {
-      this.pendingTasks.complete(pending.id, message.chatId, { taskNumber: result.taskNumber, workflowMode: "power-duty" });
+      this.pendingTasks.complete(pending.id, message.sessionId, { taskNumber: result.taskNumber, workflowMode: "power-duty" });
     }
     const text = [
       "**动力值班：仅建飞书单**",
@@ -544,10 +558,9 @@ export class ConversationService {
   }
 
   async #runBrowserFillTask(task) {
-    const { message, responder } = task;
-    let { localTaskId } = task;
+    const { message, responder, localTaskId } = task;
     const streamId = requestId("stream");
-    let pending = this.pendingTasks.find(localTaskId, message.chatId);
+    let pending = this.pendingTasks.find(localTaskId, message.sessionId);
     if (!pending) {
       await responder.replyProgress(
         streamId,
@@ -588,9 +601,8 @@ export class ConversationService {
       }
     }
     const result = await this.browserFiller.fill(pending);
-    pending = this.#reassignTaskIdFromBrowser(pending, message.chatId, result);
-    localTaskId = pending.id;
-    this.pendingTasks.setBrowserFill(localTaskId, message.chatId, result);
+    pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, result);
+    this.pendingTasks.setBrowserFill(pending.id, message.sessionId, result);
     if (pending.workflowMode === "offsite-feishu") {
       await this.#finishOffsiteFill(pending, result, message, responder, streamId);
       return;
@@ -614,7 +626,7 @@ export class ConversationService {
   async #runDone(task) {
     const { message, responder, localTaskId } = task;
     const streamId = requestId("stream");
-    const existing = this.pendingTasks.find(localTaskId, message.chatId);
+    const existing = this.pendingTasks.find(localTaskId, message.sessionId);
     if (existing?.workflowMode === "offsite-feishu") {
       await responder.replyProgress(streamId, "该工单当天为异地岗位且没有明确本地站点实际工单，不生成本地站点周报或交接班，无需 /done。", true);
       return;
@@ -623,7 +635,7 @@ export class ConversationService {
       await responder.replyProgress(streamId, `动力值班短号 ${localTaskId} 仅负责飞书建单，不生成腾讯周报或交接班草稿，无需 /done。`, true);
       return;
     }
-    const claim = this.pendingTasks.claim(localTaskId, message.chatId);
+    const claim = this.pendingTasks.claim(localTaskId, message.sessionId);
     if (!claim.ok) {
       const messages = {
         not_found: `本会话没有找到工单短号 ${localTaskId}。发送 /pending 查看待办。`,
@@ -655,7 +667,7 @@ export class ConversationService {
           shiftDate: pending.currentDate,
         },
       });
-      this.pendingTasks.complete(localTaskId, message.chatId, {
+      this.pendingTasks.complete(localTaskId, message.sessionId, {
         fileUrl: update.fileUrl,
         weeklyRows: update.weeklyRows,
         handoverRows: update.handoverRows,
@@ -670,7 +682,7 @@ export class ConversationService {
       ].filter(Boolean).join("\n");
       await responder.replyProgress(streamId, text, true);
     } catch (error) {
-      this.pendingTasks.fail(localTaskId, message.chatId, error.message);
+      this.pendingTasks.fail(localTaskId, message.sessionId, error.message);
       this.logger.error("确认飞书提交后更新腾讯草稿失败", error.message);
       await responder.replyProgress(
         streamId,
@@ -682,13 +694,13 @@ export class ConversationService {
 
   async #runGeneral(task) {
     const { message, responder } = task;
-    const threadId = this.#getChatValue("threads", message.chatId) || "";
+    const threadId = this.#getChatValue("threads", message.sessionId) || "";
     const result = await this.runner.run({
       prompt: message.text,
       threadId,
       images: message.images.map((image) => image.path),
     });
-    if (result.threadId) this.#setChatValue("threads", message.chatId, result.threadId);
+    if (result.threadId) this.#setChatValue("threads", message.sessionId, result.threadId);
     await responder.replyProgress(
       requestId("stream"),
       `**Codex ${result.ok ? "已完成" : "执行失败"}**\n耗时 ${result.seconds}s\n\n${result.text}`,
@@ -710,8 +722,7 @@ export class ConversationService {
 
   #operatorForChat(chatId) {
     return this.#getChatValue("operator", chatId)
-      || this.config.duty.defaultOperator
-      || this.dutyConfig.operator_name;
+      || "未绑定";
   }
 
   #reassignTaskIdFromBrowser(task, chatId, browserResult) {

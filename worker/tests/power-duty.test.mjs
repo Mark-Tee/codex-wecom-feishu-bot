@@ -94,6 +94,7 @@ function setup({ submitted = true, readFails = false } = {}) {
     } },
   });
   const responder = { replyText: async (s) => replies.push(s), replyProgress: async (_id, s) => replies.push(s) };
+  state.set("__operatorByChat__", {[JSON.stringify(["wecom","test-chat","test-user"])]: "甲"});
   const msg = { chatId: "test-chat", userId: "test-user", platform: "wecom", text: "工单", images: [], receivedAt: "2026-11-01T10:00:00+08:00" };
   const handle = async (text = "工单") => {
     await service.handle({ ...msg, text }, responder);
@@ -114,7 +115,7 @@ test("动力收单跳过周报交接读取和生成，即便direct-draft配置�
   assert.equal(f.calls.fill[0].workflowMode, "power-duty");
   assert.deepEqual(f.calls.fill[0].draftSpec, { weeklyRows: [], handoverRows: [] });
   assert.equal(f.calls.fill[0].powerDuty.date, "20261101");
-  assert.equal(f.pendingTasks.find("1", "test-chat").status, "completed");
+  assert.equal(f.pendingTasks.find("1", JSON.stringify(["wecom","test-chat","test-user"])).status, "completed");
   await f.handle("/done 1");
   await f.handle("/fill 1");
   assert.equal(f.calls.drafts, 0);
