@@ -105,6 +105,19 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("补充图片信息沿用原收单时间，不因跨班次回答重新判断动力岗位", async () => {
+  let prompt = "";
+  const {service,state} = createService({runner:{run:async input => {prompt=input.prompt;return {ok:true,text:JSON.stringify({needsClarification:"仍有一个字待确认"})};},stop(){}}});
+  service.config.feishuBrowser.writeApprovalFile = "D:/Codex/temp/no-permit-test.json";
+  const key=JSON.stringify(["wecom","chat-a","u1"]);
+  const first="2026-10-26T17:20:00+08:00";
+  state.set("__pendingDutyByChat__",{[key]:{userText:"工单",images:[{path:"dummy.jpg"}],ocrText:"",receivedAt:first,clarification:"缺字",expiresAt:Date.now()+60000}});
+  await service.handle({...message("补充 一个已确认的字"),receivedAt:"2026-10-26T17:40:00+08:00"},responseCollector().responder);
+  await settle();await settle();
+  assert(prompt.includes(first));assert(!prompt.includes("2026-10-26T17:40"));
+  assert.equal(state.get("__pendingDutyByChat__")[key].receivedAt,first);
+});
+
 function waitForReply(replies, phrase, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();

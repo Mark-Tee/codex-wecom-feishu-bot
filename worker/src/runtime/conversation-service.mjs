@@ -7,6 +7,7 @@ import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
 import { buildPowerDutyPrompt } from "../core/power-duty-prompt.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import {prepareImageEvidence} from "../platforms/image-evidence.mjs";
 import { buildDutyPrompt } from "../core/duty-prompt.mjs";
 import {
   inferShiftDateFromSpec,
@@ -315,6 +316,7 @@ export class ConversationService {
       handled: false,
       task: {
         ...message,
+        receivedAt: pending.receivedAt || message.receivedAt,
         text: `${pending.userText}\n【补充说明】${supplement}`,
         images: pending.images,
         ocrText: pending.ocrText,
@@ -349,7 +351,9 @@ export class ConversationService {
   }
 
   async #runDuty(task) {
-    const { message, responder, operator } = task;
+    const { responder, operator } = task;
+    let message = task.message;
+    message = await prepareImageEvidence(message, this.config, this.logger);
     const streamId = requestId("stream");
     const receivedAt = message.receivedAt || new Date().toISOString();
     const promptSource = `${message.text || ""}\n${message.ocrText || ""}`;
@@ -374,6 +378,7 @@ export class ConversationService {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: warning,
         expiresAt: Date.now() + 15 * 60 * 1000,
       });
@@ -404,6 +409,7 @@ export class ConversationService {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: "Codex 未返回可解析 JSON",
         expiresAt: Date.now() + 15 * 60 * 1000,
       });
@@ -415,6 +421,7 @@ export class ConversationService {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: parsed.needsClarification,
         expiresAt: Date.now() + 15 * 60 * 1000,
       });

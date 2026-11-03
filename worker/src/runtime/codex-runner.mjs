@@ -26,13 +26,15 @@ export function resolveCodexExecutable(explicit = "") {
   return candidates[0] || "codex";
 }
 
-function outputMessages(output) {
+export function outputMessages(output) {
   const messages = [];
   let threadId = "";
+  let usage = null;
   for (const line of String(output || "").split(/\r?\n/)) {
     if (!line.trim().startsWith("{")) continue;
     try {
       const event = JSON.parse(line);
+      if (event.type === "turn.completed") usage = event.usage || null;
       if (event.type === "thread.started" && event.thread_id) threadId = event.thread_id;
       if (
         event.type === "item.completed"
@@ -43,7 +45,7 @@ function outputMessages(output) {
       }
     } catch {}
   }
-  return { messages, threadId };
+  return { messages, threadId, usage };
 }
 
 export class CodexRunner {
@@ -132,6 +134,7 @@ export class CodexRunner {
           text: parsed.messages.join("\n\n") || stdout.trim(),
           seconds,
           threadId: parsed.threadId || threadId,
+          usage: parsed.usage,
         });
       });
     });
