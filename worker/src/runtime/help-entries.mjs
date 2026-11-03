@@ -13,7 +13,7 @@ export const HELP_ENTRIES = Object.freeze([
  {trigger:"查看排班",parameters:"",description:"排班机器人短口令：班；今；明。",example:"@排班机器人 班",limits:"只读；07:00推当天，17:00推次日。"},
  {trigger:"排班身份",parameters:"姓名",description:"排班机器人短口令：我 姓名；我查绑定。",example:"@排班机器人 我 测试甲",limits:"无姓名查看本人绑定；姓名须准确匹配，不改变工单使用人。"},
  {trigger:"排班推送状态",parameters:"",description:"排班机器人短口令：推送。",example:"@排班机器人 推送",limits:"绑定、解绑和其他管理操作只在本机维护。"},
- {trigger:"/help",parameters:"",description:"短口令：菜单；只@也显示按钮，指令说明看文字。",example:"菜单",limits:"按钮限本人当前会话，过期重新打开；业务需授权，禁止修改源表或执行管理操作。"},
+ {trigger:"/help",parameters:"",description:"短口令：菜单；只@也显示按钮，指令说明看文字。",example:"菜单",limits:"按钮限本人当前会话；失效或确认异常会提示重发菜单，清理须重新预览；业务需授权，禁止修改源表或执行管理操作。"},
 ]);
 export function formatHelpText(entries=HELP_ENTRIES) {
  return entries.map(e=>[`${e.trigger}${e.parameters?" "+e.parameters:""}　${e.description}`,`例：${e.example}；${e.limits}`].join("\n")).join("\n\n");

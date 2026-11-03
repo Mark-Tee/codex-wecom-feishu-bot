@@ -7,6 +7,28 @@ function fixture({role="ticket",state={},fail}={}){
  const click=(id,key,msgid="click")=>({cmd:"aibot_event_callback",headers:{req_id:msgid},body:{...frame.body,msgid,msgtype:"event",event:{eventtype:"template_card_event",task_id:id,event_key:key}}});
  return {cards,state,calls,replies,dispatched,frame,click,persisted:()=>persisted,revoke:()=>{authorized=false;},expire:()=>{at+=3600001;}};
 }
+
+test("expired clicks produce a new visible instruction in the original private chat",async()=>{
+ const f=fixture({role:"roster"});f.frame.body.chattype="single";delete f.frame.body.chatid;
+ await f.cards.menu(f.frame);const id=f.calls[0].body.template_card.task_id;f.expire();
+ const event=f.click(id,"m2");delete event.body.chattype;delete event.body.chatid;
+ await f.cards.handle(event);assert.equal(f.dispatched.length,0);assert.equal(f.replies.length,1);assert.match(f.replies[0].text,/失效.*菜单/);assert.equal(f.replies[0].frame.body.chattype,"single");assert.equal(f.replies[0].frame.__cardAction,true);
+});
+
+test("unknown card ACK gives explicit next step and never dispatches or replays a clear",async()=>{
+ const original=fixture();await original.cards.menu(original.frame);const id=original.calls[0].body.template_card.task_id;
+ const f=fixture({state:original.persisted(),fail:"ack timeout"});await assert.rejects(f.cards.handle(f.click(id,"m2")),/timeout/);assert.equal(f.dispatched.length,0);assert.equal(f.replies.length,1);assert.match(f.replies[0].text,/未.*执行|未.*继续/);assert.match(f.replies[0].text,/菜单/);
+});
+
+test("every menu button maps to the documented query or preview in both conversation types",async()=>{
+ const expected={roster:["班","今","明","休","我",null],ticket:["单","继续","清全部","状态",null]};
+ for(const role of ["roster","ticket"])for(const type of ["group","single"])for(const [index,command] of expected[role].entries()){
+  const f=fixture({role});f.frame.body.chattype=type;if(type==="single")delete f.frame.body.chatid;
+  await f.cards.menu(f.frame);const card=f.calls[0].body.template_card;await f.cards.handle(f.click(card.task_id,"m"+index));
+  if(command===null){assert.equal(f.dispatched.length,0);assert.equal(f.replies.at(-1).text,"完整指令");}
+  else{assert.equal(f.dispatched.length,1);assert.equal(f.dispatched[0].body.text.content,command);assert.equal(f.dispatched[0].body.chattype,type);}
+ }
+});
 test("menus use official payload, only original safe commands, ACK precedes original routing",async()=>{
  for(const role of ["roster","ticket"]){const f=fixture({role});await f.cards.menu(f.frame);const card=f.calls[0].body.template_card;assert.match(card.task_id,/^ui_[a-f0-9]{32}$/);assert(card.button_list.length<=6);assert.equal(f.calls[0].cmd,"aibot_respond_msg");
  await f.cards.handle(f.click(card.task_id,card.button_list[0].key));assert.equal(f.calls[1].cmd,"aibot_respond_update_msg");assert.deepEqual(f.calls[1].body.userids,["u1"]);assert.equal(f.calls[1].body.template_card.card_type,"button_interaction");assert.equal(f.dispatched.length,1);assert.equal(f.dispatched[0].__cardAction,true);assert.equal(f.dispatched[0].body.text.content,role==="roster"?"班":"单");
