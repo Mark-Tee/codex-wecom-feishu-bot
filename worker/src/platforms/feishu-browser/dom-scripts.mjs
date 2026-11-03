@@ -54,12 +54,30 @@ export function optionRectScript(value) {
     const generic = [...document.querySelectorAll('li, [role="menuitem"], div, span')]
       .filter((element) => element.childElementCount === 0 && isVisibleElement(element));
     const candidates = [...roleOptions, ...classOptions, ...generic];
-    const element = candidates.find((candidate) => normalizeText(candidate.textContent) === wanted);
+    const element = candidates.find((candidate) => {
+      if (normalizeText(candidate.textContent) !== wanted) return false;
+      const list = candidate.closest?.('.b-select-list');
+      if (!list) return true;
+      const row = candidate.getBoundingClientRect(), clip = list.getBoundingClientRect();
+      const y = row.top + row.height / 2;
+      return y >= clip.top && y <= clip.bottom;
+    });
     if (!element) return null;
     return {
       ...centerOf(element),
       text: String(element.textContent || "").trim(),
     };
+  })()`;
+}
+
+export function scrollDropdownScript(selector, reset = false) {
+  return `(() => {
+    const list = document.querySelector(${JSON.stringify(selector)})?.querySelector('.b-select-list');
+    if (!list || list.clientHeight <= 0 || list.scrollHeight <= list.clientHeight) return false;
+    const before = list.scrollTop;
+    list.scrollTop = ${JSON.stringify(reset)} && before > 0 ? 0
+      : Math.min(before + list.clientHeight, list.scrollHeight - list.clientHeight);
+    return list.scrollTop !== before;
   })()`;
 }
 

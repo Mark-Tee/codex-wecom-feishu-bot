@@ -20,6 +20,7 @@ import {
   fieldContainsValueScript,
   fieldSelector,
   optionRectScript,
+  scrollDropdownScript,
   openPersonSelectorScript,
   personOptionRectScript,
   pickerCellPointScript,
@@ -225,6 +226,7 @@ export class FeishuBrowserFormFiller {
     for (let attempt = 0; attempt < 10 && !option; attempt += 1) {
       await sleep(200);
       option = await session.evaluate(optionRectScript(value));
+      if (!option) await session.evaluate(scrollDropdownScript(this.#selector(fieldId), attempt === 0));
     }
     if (!option) throw new Error(`选项不存在：${value}`);
     await session.click(option.x, option.y);

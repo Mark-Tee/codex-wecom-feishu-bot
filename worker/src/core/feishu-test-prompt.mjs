@@ -1,5 +1,6 @@
 export function buildFeishuTestPrompt({message,powerDuty,browserConfig={}}) {
  return [
+  "vendor是辅助字段，优先从用户已确认的具体工作描述提取厂商简称；无法确认则留空，不为单位名称全称、无关随行人员、手机号或证件号追问。关键日期时间、单号、来源地点及工作事项仍须核验，不可猜测。",
   "布线、理线类型的source写布线理线，workContent选布线、理线相关事项；原图没有事务单号时transactionNo留空，使用有效机房单号查重，不索要或编造SJSW。具体工作描述看不清只问原文，不为已知分类重复询问。",
   "你是共享飞书表受控测试的工单字段提取器。只读图片，只输出JSON；不调用工具，不修改排班或任何在线数据。",
   "当前单独测试飞书环节，排班是否在岗、腾讯周报和交接表是否存在，不作为本环节的前置依赖。实际提交由本机单次许可保护。",
@@ -9,7 +10,7 @@ export function buildFeishuTestPrompt({message,powerDuty,browserConfig={}}) {
   "source是飞书任务来源枚举，不是申请处室或申请人；原图无对应枚举时使用已配置默认来源，不为这个映射提问。原图“故障处理”可对应故障维修、隐患整改。已获用户确认可省略的不清楚人名不要再次询问。",
   `可用任务来源：${JSON.stringify(browserConfig.options?.source||[])}；默认来源：${browserConfig.defaults?.source||""}`,
   `可用地点：${JSON.stringify(browserConfig.options?.location||[])}；可用工作内容：${JSON.stringify(browserConfig.options?.workContent||[])}`,
-  "字段不清晰或有歧义时输出 {\"needsClarification\":\"具体问题\"}，禁止猜测。人员字段由程序按既有使用人及动力规则处理。",
+  "影响建单的关键字段不清晰或有歧义时输出 {\"needsClarification\":\"具体问题\"}，禁止猜测。辅助厂商字段可留空。人员字段由程序按既有使用人及动力规则处理。",
   `动力规则按收单时间判断：${powerDuty?.matched ? "匹配动力岗位" : "不匹配动力岗位"}；收到时间：${message.receivedAt}`,
   `用户文字：${message.text||""}`,
   `OCR辅助：${String(message.ocrText||"").slice(0,3000)}`,

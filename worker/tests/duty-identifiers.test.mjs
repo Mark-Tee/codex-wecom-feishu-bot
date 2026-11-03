@@ -64,6 +64,7 @@ test("受控识别提示保留上下架来源及模糊编号确认规则", () =>
   assert.match(prompt, /不另索要SJSW/);
   assert.match(prompt, /已有编号看不清仍须询问/);
   assert.match(prompt, /workContent选布线、理线相关事项/);
+  assert.match(prompt, /不为单位名称全称/);
   assert.equal(chooseWorkContent({workContent: "设备上下架", specificWork: "陪同厂商设备上架"}, ["无故障进入机房", "上下架相关事项"]), "上下架相关事项");
 });
 
