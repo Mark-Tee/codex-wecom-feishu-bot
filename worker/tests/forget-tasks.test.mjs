@@ -56,3 +56,11 @@ test("single clear cannot see other members, and unnumbered clarification can be
  f.state.set("__operatorByChat__",{[session()]:"测试甲"});f.state.set("__pendingDutyByChat__",{[session()]:{userText:"工单",expiresAt:Date.now()+60000}});
  await f.send("/forget all");assert.match(await f.send("/forget confirm"),/0条待办及1条待补充/);assert.equal(f.state.get("__operatorByChat__")[session()],"测试甲");assert.match(await f.send("继续"),/没有未完成/);
 });
+
+test("old clear cards cannot confirm or dismiss a newer snapshot",async()=>{
+ const f=fixture();f.pendingTasks.create({chatId:"group",userId:"u1"});await f.send("/forget all");const old=f.state.get("__forgetConfirmByChat__")[session()].digest;
+ f.pendingTasks.create({chatId:"group",userId:"u1"});await f.send("/forget all");const current=f.state.get("__forgetConfirmByChat__")[session()].digest;assert.notEqual(old,current);
+ assert.match(await f.send('/forget confirm '+old),/清单已失效/);assert.match(await f.send('/forget dismiss '+old),/已失效/);assert.equal(f.state.get("__forgetConfirmByChat__")[session()].digest,current);assert.equal(f.pendingTasks.activeCount(session()),2);
+ assert.match(await f.send('/forget dismiss '+current),/已保留待办/);assert.equal(f.pendingTasks.activeCount(session()),2);assert.match(await f.send('/forget confirm '+current),/已失效/);
+ await f.send("/forget all");assert.match(await f.send('/forget confirm '+current),/已停止追踪2条/);assert.deepEqual(f.calls,{model:0,browser:0,docs:0});
+});

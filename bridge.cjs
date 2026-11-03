@@ -35,6 +35,8 @@ const WSImpl = (() => {
 const ROOT = __dirname;
 const {readServiceProfile} = require("./lib/service-profile.cjs");
 const {ticketRoute,normalizeTicketCommand,TICKET_HELP,ticketBusyReply} = require("./lib/ticket-policy.cjs");
+const {createInteractionCards}=require("./lib/interaction-cards.cjs");
+const {createTaskProgress,progressReader,taskStreamId}=require("./lib/task-progress.cjs");
 const DATA_ROOT = process.env.CODEX_FEISHU_DATA_DIR || path.join(ROOT, "data");
 const configArgumentIndex = process.argv.indexOf("--config");
 const CONFIG_PATH = configArgumentIndex >= 0
@@ -260,6 +262,11 @@ const connection = new WeComLongConnection({
   onFrame: handleFrame,
 });
 
+const interactionCards=serviceProfile.role==="ticket"?createInteractionCards({role:"ticket",state,save:saveState,send,help:TICKET_HELP,log,
+ authorized:user=>cfg.allowUsers.length?cfg.allowUsers.includes(user):(state.__operators||[]).includes(user),
+ reply:(frame,text)=>replyText({...frame,__plainHelp:true},text),dispatch:frame=>handleText(frame),
+}):null;
+
 function send(cmd, body, rid) {
   return connection.send(cmd, body, rid);
 }
@@ -293,6 +300,10 @@ function markUsageSent(key) {
 }
 
 async function replyStream(sourceFrame, streamId, content, finish) {
+  if(sourceFrame.__cardAction){
+    if(!finish)return;
+    const body=sourceFrame.body;return send("aibot_send_msg",{chatid:body.chattype==="group"?body.chatid:body.from.userid,chat_type:body.chattype==="group"?2:1,msgtype:"markdown",markdown:{content:String(content||"").slice(0,MAX_REPLY_BYTES)}});
+  }
   const body = {
     msgtype: "stream",
     stream: {
@@ -310,6 +321,7 @@ async function replyStream(sourceFrame, streamId, content, finish) {
 }
 
 async function replyText(sourceFrame, content) {
+  if(interactionCards&&content===TICKET_HELP&&!sourceFrame.__plainHelp)return interactionCards.menu(sourceFrame);
   // aibot_respond_msg 不接受 msgtype=text（会返回 40008），统一用一次性 stream 回复。
   try {
     return await replyStream(sourceFrame, reqId("stream"), String(content || ""), true);
@@ -547,7 +559,7 @@ function dutyAgentConfigError() {
   return missing.length ? `值班代理缺少文件：${missing.join("，")}` : "";
 }
 
-function runDutyAgent(message) {
+function runDutyAgent(message,{onStage=()=>{}}={}) {
   return new Promise((resolve, reject) => {
     const configError = dutyAgentConfigError();
     if (configError) {
@@ -566,6 +578,7 @@ function runDutyAgent(message) {
     );
     let out = "";
     let err = "";
+    const readStage=progressReader(onStage);
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
       reject(new Error(`值班代理超时（>${Math.round(cfg.dutyAgent.timeoutMs / 1000)}s）`));
@@ -576,6 +589,7 @@ function runDutyAgent(message) {
     });
     child.stderr.on("data", (data) => {
       err += data.toString("utf8");
+      readStage(data.toString("utf8"));
       if (err.length > 500000) err = err.slice(-500000);
     });
     child.on("error", (error) => {
@@ -744,53 +758,25 @@ async function updateTencentDraft(specPath) {
   return { updateResult, verifyResult, draftUrl };
 }
 
-async function processDutyAgentTask({ frame, prompt, chatKey, userId, images = [], ocrText = "" }) {
-  const streamId = reqId("stream");
-  const startedAt = Date.now();
-  const body = frame.body || {};
-  const chatId = body.chatid || (body.from && body.from.userid) || chatKey;
-  const chatType = body.chattype === "group" ? "group" : "single";
-  const progressTimer = setInterval(() => {
-    const secs = Math.round((Date.now() - startedAt) / 1000);
-    replyStream(frame, streamId, `机器人仍在处理工单…已运行 ${secs} 秒`, false).catch(() => {});
-  }, 15000);
-
-  try {
-    await replyStream(
-      frame,
-      streamId,
-      /^\/forget(?:\s|$)/i.test(prompt) ? "正在检查本人本地任务…" : "收到工单，正在识别字段并核对处理条件…",
-      false,
-    ).catch(() => {});
-    const result = await runDutyAgent({
-      id: body.msgid || reqId("duty"),
-      chatId,
-      chatType,
-      userId: userId || "unknown",
-      platform: "wecom",
-      text: prompt,
-      images: images.map((imagePath) => ({ path: imagePath, text: "" })),
-      ocrText,
-      receivedAt: localTimestamp(),
-    });
-    const replies = Array.isArray(result.replies) ? result.replies : [];
-    const finalReply = [...replies].reverse().find((reply) => reply.kind === "final")
-      || [...replies].reverse().find((reply) => reply.text);
-    const text = finalReply?.text || "值班代理已结束，但没有返回结果。";
-    await replyStream(frame, streamId, truncate(text), true);
-    log("duty agent done", `${Math.round((Date.now() - startedAt) / 1000)}s`);
-  } catch (error) {
-    const failureRef = reqId("duty-error");
-    log("duty agent failed", failureRef, error.message);
-    await replyStream(
-      frame,
-      streamId,
-      dutyErrorReply(error, failureRef),
-      true,
-    ).catch(() => {});
-  } finally {
-    clearInterval(progressTimer);
-  }
+async function processDutyAgentTask({frame,prompt,chatKey,userId,images=[],ocrText="",queueAck}) {
+  const streamId=taskStreamId(frame),startedAt=Date.now(),body=frame.body||{},local=/^\/forget(?:\s|$)/i.test(prompt);
+  const progress=createTaskProgress(async(text,final,action)=>{
+    if(final&&interactionCards&&await interactionCards.confirmation(frame,text,action))return;
+    return replyStream(frame,streamId,truncate(text),final);
+  },{initial:images.length?"正在识别工单…":"正在处理本人任务…",log:error=>log("任务状态更新失败",error.message)});
+  let progressTimer=null;
+  try{
+    await queueAck;
+    if(!local&&!frame.__cardAction)progressTimer=setInterval(()=>progress.heartbeat(Math.round((Date.now()-startedAt)/1000)),15000);
+    if(!local&&!frame.__cardAction)await progress.start().catch(()=>{});
+    const result=await runDutyAgent({id:body.msgid||reqId("duty"),chatId:body.chatid||body.from?.userid||chatKey,chatType:body.chattype==="group"?"group":"single",userId:userId||"unknown",platform:"wecom",text:prompt,images:images.map(path=>({path,text:""})),ocrText,receivedAt:localTimestamp()},{onStage:stage=>progress.stage(stage)});
+    const replies=Array.isArray(result.replies)?result.replies:[],finalReply=[...replies].reverse().find(reply=>reply.kind==="final")||[...replies].reverse().find(reply=>reply.text);
+    await progress.finish(finalReply?.text||"值班代理已结束，但没有返回结果。",finalReply?.action);
+    log("duty agent done",Math.round((Date.now()-startedAt)/1000)+"s");
+  }catch(error){
+    const failureRef=reqId("duty-error");log("duty agent failed",failureRef,error.message);
+    await progress.finish(dutyErrorReply(error,failureRef)).catch(()=>{});
+  }finally{clearInterval(progressTimer);}
 }
 
 async function processDutyDraftTask({ frame, prompt, chatKey, userId, images = [], dutyDraft }) {
@@ -1177,7 +1163,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
   if (!prompt || (images.length === 0 && isMenuPrompt(originalPrompt))) {
     if (serviceProfile.role === "ticket" && body.chattype === "single" && (cfg.allowUsers.length ? cfg.allowUsers.includes(userId) : (state.__operators || []).includes(userId))) {
-      await processDutyAgentTask({frame,prompt:"首页",chatKey:JSON.stringify(["ticket",body.chatid || userId,userId]),userId,images:[]}); return;
+      await interactionCards.menu(frame);return;
     }
     await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP).catch((e) => log("reply fail", e.message));
     return;
@@ -1316,7 +1302,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
       log("duty agent setup failed", configError);
       return;
     }
-    taskQueue.push({
+    const queuedTask={
       frame,
       prompt,
       chatKey,
@@ -1324,13 +1310,15 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
       images,
       ocrText,
       dutyAgent: true,
-    });
+    };
+    taskQueue.push(queuedTask);
     if (jobRunning) {
       const ahead = taskQueue.length - 1;
-      await replyText(
-        frame,
-        ahead > 0 ? `已排队，前面还有 ${ahead} 个任务，轮到你马上开始。` : "已排队，上一个任务结束后马上开始。",
+      queuedTask.queueAck=replyStream(
+        frame,taskStreamId(frame),
+        ahead > 0 ? `已排队，前面还有 ${ahead} 个任务，轮到你马上开始。` : "已排队，上一个任务结束后马上开始。",false,
       ).catch((e) => log("reply fail", e.message));
+      await queuedTask.queueAck;
       return;
     }
     drainQueue().catch((e) => log("queue error", e.message));
@@ -1541,6 +1529,9 @@ function mixedText(body) {
 }
 
 function handleFrame(frame) {
+  if(interactionCards&&frame?.cmd==="aibot_event_callback"&&frame.body?.event?.eventtype==="template_card_event"){
+    interactionCards.handle(frame).catch(error=>log("按钮处理失败",error.message));return;
+  }
   if (!frame) return;
   if (frame.cmd) log("frame", frame.cmd);
   switch (frame.cmd) {

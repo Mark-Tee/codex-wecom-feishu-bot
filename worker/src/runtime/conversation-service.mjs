@@ -105,7 +105,8 @@ export class ConversationService {
     }
 
     if(/^\/forget(?:\s|$)/i.test(text)){
-      await responder.replyText(this.#forgetTasks(message.sessionId,text));return;
+      const result=this.#forgetTasks(message.sessionId,text),confirmation=this.#getChatValue("forgetConfirm",message.sessionId);
+      await responder.replyText(result,result.startsWith("将停止追踪本人当前会话")&&confirmation?{action:{kind:"forget-confirm",token:confirmation.digest}}:undefined);return;
     }
     const savedTaskCommand = text.match(/^\/(fill|done)\s+#?(\d{1,8})$/i);
     if (savedTaskCommand && (!this.config.feishuBrowser?.writeApprovalFile || savedTaskCommand[1].toLowerCase() === "done")) {
@@ -363,6 +364,7 @@ export class ConversationService {
 
   async #runDuty(task) {
     const { responder, operator } = task;
+    await responder.stage?.("recognizing");
     let message = task.message;
     message = await prepareImageEvidence(message, this.config, this.logger);
     const streamId = requestId("stream");
@@ -521,6 +523,7 @@ export class ConversationService {
     let browserStatus = "";
     let browserResult = null;
     if (this.browserFiller?.enabled && this.config.feishuBrowser?.autoFill !== false) {
+      await responder.stage?.("checking");
       browserResult = await this.browserFiller.fill(pending);
       pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, browserResult);
       this.pendingTasks.setBrowserFill(pending.id, message.sessionId, browserResult);
@@ -630,6 +633,7 @@ export class ConversationService {
         return;
       }
     }
+    await responder.stage?.("checking");
     const result = await this.browserFiller.fill(pending);
     pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, result);
     this.pendingTasks.setBrowserFill(pending.id, message.sessionId, result);
@@ -783,9 +787,16 @@ export class ConversationService {
   }
 
   #forgetTasks(chatId,text) {
-    const command=text.match(/^\/forget\s+(#?\d{1,8}|all|confirm)$/i);
+    const command=text.match(/^\/forget\s+(#?\d{1,8}|all|confirm|dismiss)(?:\s+([a-f0-9]{64}))?$/i);
     if(!command)return "用法：清10；清全部后按提示确认。仅停止本人当前会话追踪，不删除在线记录。";
     const target=command[1].toLowerCase();
+    const token=command[2];
+    if((token&&!["confirm","dismiss"].includes(target))||(target==="dismiss"&&!token))return "确认卡无效，本次未清除。重新发送“清全部”。";
+    if(target==="dismiss"){
+      const confirmation=this.#getChatValue("forgetConfirm",chatId);
+      if(confirmation?.digest!==token)return "确认卡已失效，本次未清除。";
+      this.#setChatValue("forgetConfirm",chatId,null);return "已保留待办，本次不清除；在线记录未改动。";
+    }
     const tasks=this.pendingTasks.list(chatId,{limit:Infinity}).sort((a,b)=>Number(a.id)-Number(b.id));
     if(this.currentTask?.message?.sessionId===chatId || this.queue.items.some(task=>task.message?.sessionId===chatId) || tasks.some(task=>task.status==="processing"))return "本会话有任务处理中或排队，本次未清除。结束后重发；不要重复提交。";
     if(target!=="all" && target!=="confirm"){
@@ -807,6 +818,7 @@ export class ConversationService {
       return preview;
     }
     const pending=this.#getChatValue("forgetConfirm",chatId);
+    if(token&&pending?.digest!==token)return "确认卡对应的清单已失效，本次未清除。重新发送“清全部”。";
     this.#setChatValue("forgetConfirm",chatId,null);
     if(!pending || pending.expiresAt<Date.now())return "清除确认已失效或尚未预览，本次未清除。重新发送“清全部”。";
     if(pending.digest!==digest)return "待办或待补充内容已变化，本次未清除。重新发送“清全部”核对范围。";

@@ -367,8 +367,10 @@ test("浏览器自动提交后只回复结果，不再发送完整填报卡", as
     images: [{ path: "D:\\Codex\\cache\\wecom-images\\sample.jpg", text: "预计进入时间：09:00" }],
     ocrText: "预计进入时间：09:00",
   };
+  const stages=[];collector.responder.stage=async stage=>stages.push(stage);
   await service.handle(imageMessage, collector.responder);
   const reply = await waitForReply(collector.replies, "飞书已自动核对并提交");
+  assert.deepEqual(stages,["recognizing","checking"]);
   assert.doesNotMatch(reply.text, /真实写入待实单验收/);
   assert.match(reply.text, /本地短号：1/);
   assert.match(reply.text, /完1/);

@@ -57,7 +57,8 @@ async function main() {
   });
   const replies = [];
   const responder = {
-    replyText: async (text) => { replies.push({ kind: "text", text }); },
+    replyText: async (text, metadata) => { replies.push({ kind: "text", text, ...(metadata?.action?{action:metadata.action}:{}) }); },
+    stage: async (stage) => { if(["recognizing","checking"].includes(stage))process.stderr.write("@@BOT_STAGE "+JSON.stringify({stage})+"\n"); },
     replyProgress: async (_id, text, final = false) => {
       replies.push({ kind: final ? "final" : "progress", text });
     },
