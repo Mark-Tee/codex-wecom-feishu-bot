@@ -1,74 +1,43 @@
-# 踩坑记录
+# 排障与验证
 
-## 853000 invalid bot_id or secret
+先确认部署角色、配置路径、实际入口和版本；不要从旧README恢复已禁止的远程管理指令。当前状态与未验收项见[项目状态](PROJECT_STATUS.md)。
 
-- 最常见：截图转录错字符（`I/l/1`、`O/0`）。用复制按钮，别手抄。
-- 其次：机器人还是"设置接收消息回调地址"模式，或者长连接没保存。
-- 再其次：用的是回调模式的 Secret，不是长连接专用 Secret。
+## 按钮只有“成功”提示
 
-## 脚本报"缺少 }"或中文乱码
+平台回调ACK不等于查询结果。正常应另收到具体排班/待办。维护者核对嵌套 `event.template_card_event` 与平铺字段兼容、ACK和带cmd事件分流、回原会话的主动发送。字段冲突或卡片过期/非本人时不执行；不要将原始回调和账号上传问题单。
 
-Windows PowerShell 5.1 默认按 ANSI 读取无 BOM 的 UTF-8 脚本。
-解决：脚本保存为 **UTF-8 with BOM**。
+终态卡保持合法button_interaction结构并提供只读查看按钮。已确认清理后再点保留不能撤销，不能把这个顺序解释为按钮误触发。
 
-## codex exec 跑满 300 秒超时
+## 长连接或启动异常
 
-`spawn` 没关 stdin，Codex 在等输入。
-解决：`stdio: ["ignore", "pipe", "pipe"]`。
+每BotID只能一个长连接。两个角色各用独立凭证、目录、端口和任务名，不要同时再启动独立worker适配器。核对回环健康接口角色/认证/连接状态，以及每目录主进程和守护各一个。
 
-## 通知里的 Windows 路径显示异常
+凭证错误在本机复制核对，不通过聊天发Secret。反复掉线先排查重复实例和网络；原连接层指数退避，守护处理本机无响应，不应因外网临时离线重复杀进程。
 
-企业微信 markdown 把 `\` 当转义符。解决：显示时替换成 `/`。
+登录启动入口是 `install-autostart.ps1`，受限环境回退Startup快捷方式；`start.cmd`为隐藏守护启动。不要沿用旧WMI启动说明，不批量结束所有node.exe。真实重启/断网测试可能中断远程软件，需另行安排。
 
-## 重启后 config.toml 的 notify 被改写
+## Worker退出或缺少模块
 
-新版本 Codex 会把它包成
-`codex-computer-use.exe turn-ended --previous-notify "[\"powershell\",...]"`。
-这是应用自己的转发链，脚本仍在其中，属于正常现象。
+维护者按网关dutyAgent配置找到实际CLI目录，核对发布清单与所有静态import。缺文件时从对应核验版本恢复依赖，不能只复制单个form-filler。安装目录和源码目录不同，应核对部署哈希。
 
-## 模型执行系统查询特别慢
+隔离工作目录中用合成/help或/pending运行实际CLI，检查返回JSON内容。不得用生产state作为冒烟数据，不通过重发图片验证模块是否齐全。
 
-Codex 沙箱与交互桌面不在同一窗口站，`MainWindowHandle` 取不到，
-模型会去试 UIAutomation/WPF。
-解决：桥接进程定时采集窗口清单写 `system-info.json`，并在
-`developer_instructions` 里要求优先读文件。
+## 图片不清、排班缺失
 
-## Computer Use 截图持续超时
+按机器人提示补充准确原文；模糊人名、厂商、单号不猜。参考历史同类记录只能参考格式，不能补造本单事实。历史日期不自行改为今天；来源缺月份或有岗位冲突先维护核验。
 
-`FrameArrived timed out` / `window capture timed out`，重置会话、换资源管理器验证都一样，
-说明当前环境的 Windows.Graphics.Capture 不可用（锁屏、远程桌面、虚拟显示器等）。
-这不是应用的问题。
+## 飞书提交失败或未知
 
-## 主动推送发不出去
+常见阶段包括browser_open、record_open、field_discovery、task_number、field_fill、field_verification、submit。详细路径和截图只留本机，不公开。核验失败先停止；如果已尝试提交，先确认在线目标及业务单号实际状态，不能简单再发“填”。
 
-`aibot_send_msg` 要求该会话里先和机器人说过话，且只能推给最近一次会话；
-`chat_type` 1 是单聊、2 是群聊。
+禁止复用打开的已有记录卡、绕过查重、不完整扫描或单次许可。只有明确不存在既有提交、保护允许且问题修复后才能重试；见[写入保护](feishu-shared-test-safety.md)。
 
-## 长连接频繁断开
+## 腾讯草稿失败
 
-同一个机器人只允许一条长连接，新连接会踢掉旧的；
-心跳 30 秒一次，断线后按指数退避重连。
+新内容可能已部分追加。保存短号和回执供本机核验，不立即重复“完”。查看写前备份、写入意图和目标区域读回；已有交接行只处理经确认的合并提案，不清空重写或覆盖正式表。
 
-## 飞书建单失败
+## 统计报告暂时为空
 
-先看回复里的阶段码：
+各实例 `logs/observability/report.md`只统计启用后的匿名新事件，有事件后一分钟内更新。原业务日志不导入。新启用无样本是正常状态；本机健康接口 `observability.dropped`大于0表示采集保存失败，需要维护，但不应阻塞业务。
 
-- `browser_open`：Edge、调试端口或专用配置目录不可用。
-- `record_open`：页面已有记录卡，或找不到“待办任务列表”/“添加记录”。
-- `field_discovery`：记录卡字段名称与当前版本不一致。
-- `task_number`：全部任务列表视图不可读。
-- `field_fill`：下拉选项、人员或日期控件选择失败。
-- `field_verification`：写入后核对不一致，机器人已停止提交。
-- `submit`：已点击提交但未检测到成功确认。
-
-失败截图保存在本机 `data/feishu-browser-diagnostics`，不要提交到仓库或发到群聊。
-修正页面状态后可发送 `/fill <短号>` 重试。
-
-## 过一会儿 @ 机器人没反应，进程不见了
-
-用 `Start-Process` 或前台 `start.cmd` 启动的桥接，可能随启动它的终端/任务会话结束被一起清掉。
-排查：`Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where CommandLine -match bridge`。
-解决：用 `install-startup.ps1`，通过 WMI 创建进程并加入登录启动。
-
-守护进程验证方式：手动结束 `bridge.cjs` 的 node 进程，约 5 秒后应出现新的
-`bridge.cjs` 进程，日志里会有一次新的 `authenticated as ...`。
+报告不保存正文、图片、姓名或账号，不能还原个别人的操作；错误类别用于决定先查哪条本机诊断链。它不调用模型，也不自动修改/部署。不要把原有含敏感信息的诊断日志误当匿名报告上传Git。
