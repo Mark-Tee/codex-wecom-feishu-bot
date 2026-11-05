@@ -1,3 +1,8 @@
+export function formatDutyFailure(error) {
+  if (error.code === "DUTY_SITE_PREWRITE") return `**工单校验未通过 · 尚未写表**\n\n${error.message}\n\n下一步：把这条回复转给维护者核对原图和提取结果。本次尚未创建待办或提交飞书，腾讯草稿未改动；先不要重复发图。`;
+  return `**工单处理未完成**\n\n${error.message}\n\n下一步：把这条回复转给维护者核验。当前写入结果未确认，暂时不要重发工单或重复执行命令。`;
+}
+
 export function formatPendingTasks(tasks) {
   if (!tasks.length) return "本会话没有未完成工单。";
   const labels = {

@@ -57,8 +57,11 @@ test("待命只保留明确的一条实际工单，移除交接，拒绝默认�
   assert.deepEqual(result.spec.weeklyRows, [row]);
   assert.deepEqual(result.spec.handoverRows, []);
   for (const spec of [{ weeklyRows: [], handoverRows: [] }, { weeklyRows: [row, row], handoverRows: [] }]) {
-    assert.throws(() => applySiteRecordRules(spec, { context, fillCard, config }), /待命本身不生成记录/);
+    assert.throws(() => applySiteRecordRules(spec, { context, fillCard, config }), {code: "DUTY_SITE_PREWRITE"});
   }
   assert.throws(() => applySiteRecordRules({ weeklyRows: [[1, "站点A", "其他", "网络通报"]], handoverRows: [] }, { context, fillCard, config }), /不能附加/);
-  assert.throws(() => applySiteRecordRules({ weeklyRows: [row], handoverRows: [] }, { context, fillCard: {}, config }), /待命本身不生成记录/);
+  assert.throws(() => applySiteRecordRules({ weeklyRows: [row], handoverRows: [] }, { context, fillCard: {}, config }), {code: "DUTY_SITE_PREWRITE"});
+  assert.throws(() => applySiteRecordRules({weeklyRows: [row], handoverRows: []}, {
+    context, fillCard: {...fillCard, location: "A1-302"}, config,
+  }), {code: "DUTY_SITE_PREWRITE"});
 });

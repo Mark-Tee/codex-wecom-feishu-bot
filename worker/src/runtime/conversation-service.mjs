@@ -33,6 +33,7 @@ import { extractDutyJson } from "./duty-output.mjs";
 import { formatHelpText } from "./help-entries.mjs";
 import {
   formatBrowserFillSummary,
+  formatDutyFailure,
   formatPendingTasks,
   formatStatus,
 } from "./output-format.mjs";
@@ -362,7 +363,7 @@ export class ConversationService {
       await task.responder.replyProgress(
         requestId("stream"),
         ["duty", "done", "browser-fill"].includes(task.kind)
-          ? `**工单处理未完成**\n\n${error.message}\n\n下一步：把这条回复转给维护者核验。当前写入结果未确认，暂时不要重发工单或重复执行命令。`
+          ? formatDutyFailure(error)
           : `**Codex 执行失败**\n\n${error.message}`,
         true,
       ).catch(() => {});

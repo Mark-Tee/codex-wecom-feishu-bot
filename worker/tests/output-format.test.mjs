@@ -2,9 +2,19 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   formatBrowserFillSummary,
+  formatDutyFailure,
   formatPendingTasks,
   formatStatus,
 } from "../src/runtime/output-format.mjs";
+
+test("已知写前站点拦截与未知提交错误分别提示", () => {
+  const prewrite = formatDutyFailure(Object.assign(new Error("请核对数据中心"), {code: "DUTY_SITE_PREWRITE"}));
+  assert.match(prewrite, /尚未创建待办或提交飞书/);
+  assert.doesNotMatch(prewrite, /写入结果未确认/);
+  const unknown = formatDutyFailure(new Error("提交超时"));
+  assert.match(unknown, /写入结果未确认/);
+  assert.doesNotMatch(unknown, /尚未写表/);
+});
 
 test("待办和状态文本保持原有信息", () => {
   assert.match(formatPendingTasks([]), /没有未完成/);

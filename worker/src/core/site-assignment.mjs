@@ -43,7 +43,7 @@ export function applySiteRecordRules(spec, { context, fillCard, config }) {
   const hasHomeTicket = isHome(fillCard?.location)
     && validateDutyIdentifiers(fillCard).length === 0;
   if (standby && (!hasHomeTicket || (spec.weeklyRows || []).length !== 1)) {
-    throw new Error("待命本身不生成记录，只登记地点和单号明确的一条实际工单，请核对工单信息");
+    throw Object.assign(new Error("待命只登记一条实际工单，请核对所属数据中心站点（不是机房模块）、单号及草稿条数。"), {code: "DUTY_SITE_PREWRITE"});
   }
   if (!hasHomeTicket) {
     return { spec: { ...spec, weeklyRows: [], handoverRows: [] }, assignment, skipHomeDraft: true };
@@ -51,7 +51,7 @@ export function applySiteRecordRules(spec, { context, fillCard, config }) {
   const rows = spec.weeklyRows || [];
   if (rows.length > 1 || rows.some((row) => !isHome(row[1])
     || (/^(?:\d+[、.\s]*)?(?:日常机房巡检|机房巡检|网络通报|系统通报|\d+月\d+日(?:白班|夜班)值班)$/.test(String(row[3]).trim()) && !String(fillCard.specificWork || "").includes(String(row[3]).trim())))) {
-    throw new Error("待命或异地安排时只登记明确的本地站点实际工单，不能附加巡检、通报或值班记录，请核对工单草稿");
+    throw Object.assign(new Error("待命或异地安排时只登记明确的本地站点实际工单，不能附加巡检、通报或值班记录，请核对工单草稿"), {code: "DUTY_SITE_PREWRITE"});
   }
   return { spec: { ...spec, handoverRows: [] }, assignment, skipHomeDraft: rows.length === 0 };
 }
