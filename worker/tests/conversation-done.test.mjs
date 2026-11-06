@@ -105,6 +105,14 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("本机批准的身份在首次消息绑定，仅限该会话，不覆盖冲突或未知姓名",async()=>{
+  const {service,state}=createService();state.set("__operatorByChat__",{});
+  const output=responseCollector();await service.handle({...message("/status"),boundOperator:"测试乙"},output.responder);
+  const key=JSON.stringify(["wecom","chat-a","u1"]);assert.equal(state.get("__operatorByChat__")[key],"测试乙");
+  await service.handle({...message("/status"),boundOperator:"测试甲"},output.responder);assert.match(output.replies.at(-1).text,/未覆盖身份/);assert.equal(state.get("__operatorByChat__")[key],"测试乙");
+  await service.handle({...message("/status","chat-b"),boundOperator:"未知姓名"},output.responder);assert.match(output.replies.at(-1).text,/未覆盖身份/);assert.equal(Object.keys(state.get("__operatorByChat__")).length,1);
+});
+
 test("orphan confirmation cannot fall through to a general host-capable model run",async()=>{
  let runs=0;const {service}=createService({runner:{run:async()=>{runs++;return {ok:true,text:"safe"};},stop(){}}});const output=responseCollector();
  await service.handle(message("是"),output.responder);await settle();await settle();assert.equal(runs,0);assert.match(output.replies.at(-1).text,/工单|菜单|help/);

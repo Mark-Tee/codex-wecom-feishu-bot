@@ -11,6 +11,7 @@ const {createInteractionCards}=require("./lib/interaction-cards.cjs");
 const {createPowerHandoff}=require("./lib/power-handoff.cjs");
 const {parseInbound,createIngressGuard}=require("./lib/input-guard.cjs");
 const {localRequest}=require("./lib/local-http.cjs");
+const {createAccessRequests}=require("./lib/access-request.cjs");
 const ROOT=__dirname,profile=readServiceProfile(ROOT);
 const {createObservability}=require("./lib/observability.cjs");
 const observability=createObservability({root:ROOT,role:"roster"});
@@ -83,14 +84,15 @@ const health=()=>({service:"codex-wecom-bridge",serviceId:crypto.createHash("sha
 const rosterHandle=createRosterService({state,save,controller,reply,health,handoff,allowUsers,observeStart:observability.start,observe:observability.mark,makeCode:()=>String(crypto.randomInt(100000,1000000))});
 cards=createInteractionCards({role:"roster",state,save,send:connection.send.bind(connection),reply:rawReply,help:ROSTER_HELP,log,dispatch:frame=>observedRosterHandle(frame),authorized:user=>allowUsers.length?allowUsers.includes(user):(state.__operators||[]).includes(user)});
 async function observedRosterHandle(frame){try{return await rosterHandle(frame);}catch(error){observability.mark(frame,"failed");throw error;}finally{observability.finish(frame);}}
-const ingress=createIngressGuard({authorized:user=>allowUsers.length?allowUsers.includes(user):(state.__operators||[]).includes(user)});
+const accessRequests=createAccessRequests({state,save,members:()=>business().site_rules.departments.flatMap(group=>group.members),reply:rawReply,role:"roster",allowUsers,secret:config.secret,port:profile.healthPort});
+const ingress=createIngressGuard({authorized:accessRequests.authorized,allowRequest:accessRequests.allows});
 handle=async frame=>{
   if(frame?.cmd!=="aibot_msg_callback"&&!(frame?.cmd==="aibot_event_callback"&&frame.body?.event?.eventtype==="template_card_event"))return;
   const verdict=ingress.check(frame);
   if(!verdict.ok){log("输入已拒绝",verdict.code);if(verdict.reply)await rawReply({...frame,__cardAction:frame.cmd==="aibot_event_callback",body:{...frame.body,chattype:frame.body.chattype||(frame.body.chatid?"group":"single")}},verdict.text).catch(()=>{});return;}
-  try{if(await cards.handle(frame))return;return await observedRosterHandle(frame);}finally{verdict.release();}
+  try{if(await accessRequests.request(frame))return;if(await cards.handle(frame))return;return await observedRosterHandle(frame);}finally{verdict.release();}
 };
-const server=http.createServer((req,res)=>{if(!localRequest(req,profile.healthPort)){res.writeHead(403);res.end();return;}if(req.method==="GET"&&req.url==="/health"){res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(health()));}else{res.writeHead(404);res.end();}});
+const server=http.createServer((req,res)=>{if(accessRequests.local(req,res))return;if(!localRequest(req,profile.healthPort)){res.writeHead(403);res.end();return;}if(req.method==="GET"&&req.url==="/health"){res.writeHead(200,{"content-type":"application/json","cache-control":"no-store"});res.end(JSON.stringify(health()));}else{res.writeHead(404);res.end();}});
 server.on("error",()=>{log("排班端口占用或不可用，本实例退出");process.exit(1);});
 let timer;
 server.listen({port:profile.healthPort,host:"127.0.0.1",exclusive:true},()=>{

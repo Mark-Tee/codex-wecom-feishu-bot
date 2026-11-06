@@ -777,7 +777,7 @@ async function processDutyAgentTask({frame,prompt,chatKey,userId,images=[],ocrTe
     await queueAck;
     if(!local&&!frame.__cardAction)progressTimer=setInterval(()=>progress.heartbeat(Math.round((Date.now()-startedAt)/1000)),15000);
     if(!local&&!frame.__cardAction)await progress.start().catch(()=>{});
-    const result=await runDutyAgent({id:body.msgid||reqId("duty"),chatId:body.chatid||body.from?.userid||chatKey,chatType:body.chattype==="group"?"group":"single",userId:userId||"unknown",platform:"wecom",text:prompt,images:images.map(path=>({path,text:""})),ocrText,receivedAt:localTimestamp()},{onStage:stage=>progress.stage(stage)});
+    const result=await runDutyAgent({id:body.msgid||reqId("duty"),chatId:body.chatid||body.from?.userid||chatKey,chatType:body.chattype==="group"?"group":"single",userId:userId||"unknown",platform:"wecom",boundOperator:accessRequests.identity(userId,body.chattype==="group"?body.chatid:"private:"+userId),text:prompt,images:images.map(path=>({path,text:""})),ocrText,receivedAt:localTimestamp()},{onStage:stage=>progress.stage(stage)});
     for(const outcome of Array.isArray(result.observations)?result.observations:[])observability.mark(frame,outcome);
     for(const error of Array.isArray(result.errors)?result.errors:[])observability.record({type:"error",error});
     const replies=Array.isArray(result.replies)?result.replies:[],finalReply=[...replies].reverse().find(reply=>reply.kind==="final")||[...replies].reverse().find(reply=>reply.text);
@@ -1523,12 +1523,22 @@ async function collectImages(body) {
   return { paths, texts };
 }
 
-const ingress=createIngressGuard({authorized:user=>cfg.allowUsers.length?cfg.allowUsers.includes(user):(state.__operators||[]).includes(user)});
+const {createAccessRequests}=require("./lib/access-request.cjs");
+const accessRequests=createAccessRequests({state,save:saveState,members:()=>{
+  const agent=JSON.parse(fs.readFileSync(cfg.dutyAgent.configPath,"utf8").replace(/^\uFEFF/,""));
+  const file=cfg.dutyReport.configPath||path.resolve(cfg.dutyAgent.repoPath,agent.duty.configPath);
+  return JSON.parse(fs.readFileSync(file,"utf8").replace(/^\uFEFF/,"")).line.team_members;
+},people:()=>{
+  const file=path.join(cfg.dutyAgent.repoPath,"state.json");
+  if(!fs.existsSync(file))return [];
+  return Object.entries(JSON.parse(fs.readFileSync(file,"utf8")).__operatorByChat__||{}).flatMap(([key,name])=>{try{const parts=JSON.parse(key);return parts.length===3?[{user:parts[2],name}]:[];}catch{return [];}});
+},reply:replyText,role:"ticket",allowUsers:cfg.allowUsers,secret:cfg.secret,port:serviceProfile.healthPort});
+const ingress=createIngressGuard({authorized:accessRequests.authorized,allowRequest:accessRequests.allows});
 async function guardedFrame(frame,work){
   const verdict=ingress.check(frame);
   const target={...frame,__cardAction:frame?.cmd==="aibot_event_callback",body:{...frame?.body,chattype:frame?.body?.chattype||(frame?.body?.chatid?"group":"single")}};
   if(!verdict.ok){log("输入已拒绝",verdict.code);if(verdict.reply)await replyText(target,verdict.text).catch(()=>{});return;}
-  try{if(["image","mixed"].includes(frame.body.msgtype)&&taskQueue.length>=10){await replyText(target,"待处理工单较多，请稍后重试；不要重复提交。");return;}return await work();}
+  try{if(await accessRequests.request(frame))return;if(["image","mixed"].includes(frame.body.msgtype)&&taskQueue.length>=10){await replyText(target,"待处理工单较多，请稍后重试；不要重复提交。");return;}return await work();}
   catch(error){log("输入处理异常，已隔离");await replyText(target,error.code==="MEDIA_REJECTED"?"图片下载或校验未完成，尚未处理工单。请稍后重发PNG/JPEG截图，每张≤16MiB；仍失败时联系维护者。":"请求未完成，请按上一条提示操作；若无提示，联系维护者核验，勿重复提交。").catch(()=>{});}
   finally{verdict.release();}
 }
@@ -1572,6 +1582,7 @@ function handleFrame(frame) {
 
 function startNotifyServer(onReady) {
   const server = http.createServer((req, res) => {
+    if(accessRequests.local(req,res))return;
     if(!localRequest(req,serviceProfile.healthPort)){res.writeHead(403);res.end("Forbidden");return;}
     if (req.method === "GET" && req.url === "/health") {
       const connectionHealth = connection.healthWatch?.snapshot();

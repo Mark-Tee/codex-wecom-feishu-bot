@@ -109,6 +109,13 @@ export class ConversationService {
       return;
     }
 
+    if (message.boundOperator) {
+      const name=message.boundOperator,existing=this.#getChatValue("operator",message.sessionId);
+      if (this.dutyConfig.line.team_members.filter(value=>value===name).length!==1 || existing&&existing!==name) {
+        await responder.replyText("本机批准的姓名与成员名单或本会话绑定不一致，请维护者核对；未覆盖身份、未处理工单。");return;
+      }
+      if(!existing)this.#setChatValue("operator",message.sessionId,name);
+    }
     if(/^\/forget(?:\s|$)/i.test(text)){
       const result=this.#forgetTasks(message.sessionId,text),confirmation=this.#getChatValue("forgetConfirm",message.sessionId);
       await responder.replyText(result,result.startsWith("将停止追踪本人当前会话")&&confirmation?{action:{kind:"forget-confirm",token:confirmation.digest}}:undefined);return;

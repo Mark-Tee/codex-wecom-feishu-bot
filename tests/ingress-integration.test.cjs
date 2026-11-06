@@ -1,10 +1,13 @@
 const test=require("node:test"),assert=require("node:assert/strict"),fs=require("node:fs"),vm=require("node:vm"),path=require("node:path");
 const {parseInbound,createIngressGuard}=require("../lib/input-guard.cjs");
+const {createAccessRequests}=require("../lib/access-request.cjs");
 const source=fs.readFileSync(process.env.BOT_ENTRY_UNDER_TEST||path.join(__dirname,"../bridge.cjs"),"utf8");
 const section=(start,end)=>{const from=source.indexOf(start),until=source.indexOf(end,from);assert(from>=0&&until>from);return source.slice(from,until);};
 test("actual gateway rejects unauthorized media, malformed content and forged button keys before backend work",async()=>{
  let downloads=0,handled=0,cards=0;const messages=[];
- const sandbox=vm.createContext({createIngressGuard,cfg:{allowUsers:["owner"]},state:{},taskQueue:[],log(){},replyText:async(_frame,text)=>messages.push(text),handleText:async()=>handled++,collectImages:async()=>{downloads++;return {paths:[],texts:[]};},mixedText:()=>"",interactionCards:{handle:async()=>cards++},safeParse:parseInbound,frameId:frame=>frame.headers?.req_id,ackWaiters:new Map(),Date});
+ const state={__operators:["owner"]},replyText=async(_frame,text)=>messages.push(text);
+ const accessRequests=createAccessRequests({state,save(){},members:()=>["测试甲"],reply:replyText,role:"ticket"});
+ const sandbox=vm.createContext({accessRequests,createIngressGuard,cfg:{allowUsers:["owner"]},state,taskQueue:[],log(){},replyText,handleText:async()=>handled++,collectImages:async()=>{downloads++;return {paths:[],texts:[]};},mixedText:()=>"",interactionCards:{handle:async()=>cards++},safeParse:parseInbound,frameId:frame=>frame.headers?.req_id,ackWaiters:new Map(),Date});
  vm.runInContext(section('const ingress=createIngressGuard(','\nfunction mixedText(body)'),sandbox);
  const manual=source.includes('function onFrame(raw)');vm.runInContext(manual?section('function onFrame(raw)','\nfunction startHeartbeat()'):section('function handleFrame(frame)','\nfunction startNotifyServer'),sandbox);
  const send=frame=>manual?sandbox.onFrame(JSON.stringify(frame)):sandbox.handleFrame(frame);
@@ -13,5 +16,9 @@ test("actual gateway rejects unauthorized media, malformed content and forged bu
  send({...frame("forged"),cmd:"aibot_event_callback",body:{...frame("forged").body,event:{eventtype:"template_card_event",task_id:"ui_"+"a".repeat(32),event_key:"/exec"}}});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(downloads,0);assert.equal(handled,0);assert.equal(cards,0);
  send(frame("legitimate"));await new Promise(resolve=>setImmediate(resolve));assert.equal(downloads,1);assert.equal(handled,1);
- send(frame("legitimate"));await new Promise(resolve=>setImmediate(resolve));assert.equal(downloads,1);assert.equal(handled,1);assert(messages.some(text=>/无权限/.test(text)));
+ send(frame("legitimate"));await new Promise(resolve=>setImmediate(resolve));assert.equal(downloads,1);assert.equal(handled,1);assert(messages.some(text=>/未授权/.test(text)));
+ send(frame("apply","applicant",{msgtype:"text",text:{content:"我 测试甲"}}));await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(handled,1);assert.equal(downloads,1);assert(!accessRequests.authorized("applicant"));
+ const pending=accessRequests.manage("list").requests[0];assert.equal(pending.user,"applicant");accessRequests.manage("approve "+pending.id);
+ send(frame("approved","applicant",{msgtype:"text",text:{content:"单"}}));await new Promise(resolve=>setImmediate(resolve));assert.equal(handled,2);assert.equal(downloads,1);
 });

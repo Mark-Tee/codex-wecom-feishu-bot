@@ -32,7 +32,8 @@ test("service profiles separate roles ports and entry points, reject invalid con
  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test("ticket role keeps roster and unrelated tasks out of model and worker routes",()=>{
- for(const text of ["查看排班","排班身份 测试甲"])assert.equal(ticketRoute(text),"roster");
+ assert.equal(ticketRoute("查看排班"),"roster");
+ for(const text of ["我 测试甲","排班身份 测试甲"])assert.equal(ticketRoute(text),"worker");
  assert.equal(ticketRoute("帮我做一个网站"),"help");assert.equal(ticketRoute("/usage"),"denied");
  for(const text of ["/as 测试甲","我是测试甲","/pending","/done 12","/fill 12","/draft","请处理工单"])assert.equal(ticketRoute(text),"worker");
  assert.equal(ticketRoute("/help"),"local");assert.equal(ticketRoute("/help",true),"local");assert.equal(ticketRoute("查看排班",true),"roster");assert.equal(ticketRoute("",true),"worker");

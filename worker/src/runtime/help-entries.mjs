@@ -1,4 +1,5 @@
 export const HELP_ENTRIES = Object.freeze([
+ {trigger:"我",parameters:"本人姓名",description:"新成员申请使用；本机确认后授权并绑定申请会话。",example:"我 测试甲",limits:"申请1小时有效，两个机器人分别确认；不自动授权，同名账号冲突人工核对；必要姓名、账号和会话仅存本机授权状态，不进匿名统计。"},
  {trigger:"安全限制（自动）",parameters:"",description:"非法/超长/越权请求拒绝；每人20次/分钟，单图16MiB，每条最多4张PNG/JPEG。",example:"发送菜单查看合法业务指令",limits:"频繁请求稍后重试；不执行系统命令或任意URL，识别工具权限核验失败即停止；清理不回滚在线结果。"},
  {trigger:"匿名使用统计（自动）",parameters:"",description:"两机器人仅本机汇总指令类别、次数、耗时、结果与错误类别。",example:"正常查询即可，无需额外指令",limits:"不记录正文、图片、姓名、账号；不做个人画像；建议由本机维护复核，不自动修改或上线。"},
  {trigger:"清",parameters:"短号 / 全部",description:"停止本人当前会话追踪；预览可点确认清除或保留待办。",example:"清10；清全部后回复确认清全部",limits:"按钮绑定本次清单；长清单用文字确认；处理中暂不能清；不删在线记录，保留防重状态。"},
