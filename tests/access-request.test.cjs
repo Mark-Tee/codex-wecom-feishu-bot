@@ -12,10 +12,10 @@ test("only exact small identity text can enter the unauthorized request path",()
   assert.equal(guard.check({...frame(),body:{...frame().body,msgtype:"image",image:{url:"https://example.com"}}}).code,"unauthorized");
   const first=guard.check(frame());assert(first.ok);first.release();assert.equal(guard.check(frame()).code,"duplicate");
 });
-test("request persists without permission; approval binds only the applicant conversation",async()=>{
+test("request persists without permission; approval binds private and defaults across groups",async()=>{
   const {state,api}=setup();await api.request(frame());assert(!api.authorized("new-user"));assert.equal(state.__schedulePeople,undefined);
   const pending=api.manage("list").requests[0];assert.equal(pending.name,"测试甲");assert.equal(pending.chat,"group-a");
-  api.manage("approve "+pending.id);assert(api.authorized("new-user"));assert.equal(state.__schedulePeople[JSON.stringify(["group-a","new-user"])],"测试甲");assert.equal(Object.keys(state.__schedulePeople).length,1);
+  api.manage("approve "+pending.id);assert(api.authorized("new-user"));assert.equal(state.__schedulePeople[JSON.stringify(["group-a","new-user"])],"测试甲");assert.equal(Object.keys(state.__schedulePeople).length,2);assert.equal(state.__approvedPeople["new-user"],"测试甲");
   assert.throws(()=>api.manage("approve "+pending.id),/已处理/);assert.deepEqual(api.manage("list").requests,[]);
 });
 test("duplicate requests, expiry, rejection and unique-name conflicts do not grant access",async()=>{
@@ -34,9 +34,43 @@ test("existing worker identities also prevent another account claiming the same 
   const {api}=setup({people:()=>[{user:"existing-worker-user",name:"测试甲"}]});await api.request(frame());
   assert.deepEqual(api.manage("list").requests,[]);assert(!api.authorized("new-user"));
 });
+
+test("one approval resolves only the same account/name requests and preserves unrelated ones",async()=>{
+  const {api,state}=setup();
+  await api.request(frame("u","我 测试甲","group-a"));await api.request(frame("u","我 测试甲",null));
+  await api.request(frame("other","我 测试乙","group-a"));const pending=api.manage("list").requests;
+  api.manage("approve "+pending[0].id);
+  assert.equal(state.__schedulePeople[JSON.stringify(["private:u","u"])],"测试甲");
+  assert.deepEqual(api.manage("list").requests.map(item=>item.user),["other"]);assert(!api.authorized("other"));
+  assert.throws(()=>api.manage("approve "+pending[1].id),/已处理/);
+});
+
+test("sync only extends a previously approved unique identity, without modifying other users",()=>{
+  const {api,state}=setup();state.__operators=["owner"];state.__schedulePeople={[JSON.stringify(["group-a","owner"])]:"测试甲"};
+  assert.throws(()=>api.manage("sync stranger"),/只能补齐/);api.manage("sync owner");
+  assert.equal(state.__schedulePeople[JSON.stringify(["private:owner","owner"])],"测试甲");assert.deepEqual(state.__operators,["owner"]);
+  state.__schedulePeople[JSON.stringify(["group-b","owner"]) ]="测试乙";
+  assert.throws(()=>api.manage("sync owner"),/只能补齐/);
+});
+
+test("cross-session approval refuses an existing conflicting identity and rolls back save failure",async()=>{
+  const state={};let failed=false;const {api}=setup({state,save(){if(failed)throw Error("disk full");}});
+  await api.request(frame());const id=api.manage("list").requests[0].id;
+  state.__schedulePeople={[JSON.stringify(["private:new-user","new-user"])]:"测试乙"};
+  assert.throws(()=>api.manage("approve "+id),/其他姓名/);assert(!api.authorized("new-user"));
+  state.__schedulePeople={};failed=true;assert.throws(()=>api.manage("approve "+id),/disk full/);
+  assert.equal(state.__approvedPeople,undefined);assert(!api.authorized("new-user"));assert.equal(api.manage("list").requests.length,1);
+});
+
+test("approved default is own-property safe and cannot be renamed by the applicant",async()=>{
+  const {api,state,replies}=setup({role:"ticket"});assert.equal(api.identity("constructor","group-a"),"");
+  await api.request(frame("__proto__"));api.manage("approve "+api.manage("list").requests[0].id);
+  assert(Object.hasOwn(state.__approvedPeople,"__proto__"));assert.equal(api.identity("__proto__","different-group"),"测试甲");assert.equal({}.name,undefined);
+  await api.request(frame("__proto__","我 测试乙"));assert.match(replies.at(-1),/不可自行更换/);assert.equal(api.identity("__proto__","group-a"),"测试甲");
+});
 test("ticket approval binds the private scope and honors fixed allowlists and persistence failure",async()=>{
   const {api,state}=setup({role:"ticket"});await api.request(frame("u","我 测试甲",null));api.manage("approve "+api.manage("list").requests[0].id);
-  assert.equal(api.identity("u","private:u"),"测试甲");assert.equal(api.identity("u","group-a"),"");
+  assert.equal(api.identity("u","private:u"),"测试甲");assert.equal(api.identity("u","group-a"),"测试甲");assert.equal(api.identity("different","group-a"),"");
   const fixed=setup({allowUsers:["owner"]});await fixed.api.request(frame());assert.equal(fixed.api.manage("list").requests.length,0);
   const failed=setup({save(){throw Error("disk full");}});await assert.rejects(failed.api.request(frame()));assert.equal(failed.state.__accessRequests,undefined);assert(!failed.api.authorized("new-user"));
 });

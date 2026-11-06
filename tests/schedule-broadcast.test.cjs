@@ -2,6 +2,15 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {createScheduleBroadcast} = require("../lib/schedule-broadcast.cjs");
 const group = {body:{chattype:"group",chatid:"test-group"}};
+
+test("approved name personalizes private and new group queries without mixing accounts",async()=>{
+ const state={__approvedPeople:{approved:"测试甲"}},selections=[],replies=[];
+ const c=createScheduleBroadcast({state,save(){},read:async(_,selection)=>{selections.push(selection);return "fresh";},reply:async(_,text)=>replies.push(text)});
+ for(const body of [{chattype:"single",from:{userid:"approved"}},{chattype:"group",chatid:"new-group",from:{userid:"approved"}}])await c.command({body},"今");
+ assert.deepEqual(selections.map(item=>item.viewer),["测试甲","测试甲"]);
+ await c.command({body:{chattype:"single",from:{userid:"other"}}},"今");assert.equal(selections.length,2);assert.match(replies.at(-1),/本人姓名/);
+ assert.equal(state.__schedulePeople,undefined);
+});
 function fixture(extra={}) {
   const state={__scheduleGroup:{chatid:"test-group",boundAt:"2026-11-01T00:00:00Z"}};
   const sent=[],replies=[];

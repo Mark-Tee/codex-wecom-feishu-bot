@@ -3,7 +3,7 @@ const fs=require("node:fs"),path=require("node:path"),http=require("node:http");
 const root=path.resolve(__dirname,".."),{readServiceProfile}=require("../lib/service-profile.cjs");
 async function run(){
   const args=process.argv.slice(2),command=args.join(" ");
-  if(!/^(?:list|(?:approve|reject) [a-f0-9]{16})$/.test(command))throw Error("在对应机器人目录运行：node scripts/access-requests.cjs list；核对本人账号后 approve 申请编号，或 reject 申请编号。两个机器人分别确认。");
+  if(!/^(?:list|(?:approve|reject) [a-f0-9]{16}|sync [A-Za-z0-9._@-]{1,128})$/.test(command))throw Error("在对应机器人目录运行：node scripts/access-requests.cjs list；核对后 approve 申请编号 / reject 申请编号；sync 已授权账号补齐两种会话身份。两个机器人分别确认。");
   const cfg=JSON.parse(fs.readFileSync(path.join(root,"config.json"),"utf8").replace(/^\uFEFF/,"")),profile=readServiceProfile(root);
   if(!cfg.secret)throw Error("本机机器人凭证缺失");
   const data=JSON.stringify({text:command});
