@@ -1,53 +1,62 @@
-# Design Notes
+# 架构与模块边界
 
-## Why a long connection
-
-The WeCom intelligent bot uses an outbound WebSocket. This avoids public webhook
-exposure, port forwarding, and inbound firewall changes.
-
-## Task flow
-
-1. The bridge verifies the paired WeCom user.
-2. Normal chat is executed by `codex exec` and resumed by thread ID.
-3. Work orders are routed to the local duty worker.
-4. The worker extracts fields, validates identifiers, and controls the dedicated
-   Edge profile.
-5. The browser filler reads the current Feishu task sequence, creates one new
-   record, verifies every field, and submits only after verification.
-6. The final response returns the Feishu task number and `/done` short ID.
-
-## Short ID
-
-The short ID is the last three digits of the Feishu task-list number with leading
-zeros removed:
+更新：2026-11-03，对应当前修复分支；代码和机器配置决定实际行为，历史方案不能作为启用证明。
 
 ```text
-WN20261026006 -> 6
-WN20261026012 -> 12
+企业微信长连接（每BotID一个实例）
+  ├─ roster-bot.cjs
+  │    ├─ roster-service / schedule-broadcast / power-handoff
+  │    └─ 共享排班规则 + 腾讯只读接口 + 交班所需飞书只读接口
+  └─ bridge.cjs（ticket角色）
+       ├─ 权限、本人会话、按钮、消息去重、串行队列
+       └─ handle-wecom-message.mjs（单次子进程）
+            └─ ConversationService
+                 ├─ CodexRunner + 图片证据 / 澄清
+                 ├─ PendingTaskStore + 业务规则
+                 ├─ FeishuBrowserFormFiller → 新建/核验/提交/读回
+                 └─ /done → TencentDraftRepository → 固定草稿
+
+每实例：observability → 本地匿名事件和规则建议
+每实例：watchdog → 回环健康检查、退避重启和日志轮转
 ```
 
-## Concurrency
+## 分层
 
-- Chat sessions are isolated by chat ID.
-- The task queue is serial on the host.
-- Feishu task numbers are read immediately before creating a record.
-- A second read occurs before submission.
-- Existing record cards are never reused.
+| 模块 | 负责 | 不应负责 |
+|---|---|---|
+| `lib/wecom-long-connection.cjs` | 连接、认证、ACK与事件分流、重连 | 值班业务判断 |
+| `lib/roster-service.cjs`、`lib/schedule-broadcast.cjs` | 只读查询路由、身份、群播报 | 建单、改排班、模型问答 |
+| `lib/power-handoff.cjs` | 私聊模拟交班发送状态与防重 | 宣称真实交接完成 |
+| `lib/interaction-cards.cjs` | 当前人/当前会话/角色/有效期约束、点击排重 | 任意命令执行、给用户授权 |
+| `lib/task-progress.cjs` | 同一消息的串行阶段更新、结束封口 | 把进度当登记成功 |
+| `worker/src/runtime/` | 会话、身份确认、短号、队列、机器协议 | 把OCR猜测当事实 |
+| `worker/src/core/` | 班次、岗位、日期、站点、字段及草稿规则 | 平台协议和网络读写 |
+| `worker/src/platforms/feishu-browser/` | 本机授权页面操作、目标核验、业务查重与读回 | 自行扩大写入范围 |
+| `worker/src/providers/tencent-docs/` | 在线来源、草稿整行检查、备份、追加、读回 | 覆盖其他人的已有内容 |
+| `lib/observability.cjs` | 匿名白名单事件、限量轮转、规则汇总 | 正文/账号采集、自动改代码部署 |
 
-## Failure handling
+`combined` 与通用聊天、用量估价、缓存等辅助模块保留历史兼容用途；当前分离角色并未因此开放通用问答或远程管理。`worker/src/legacy/`不是当前默认浏览器建单链路。
 
-- Configuration and field validation failures stop before browser submission.
-- Browser failures return the partial state, stage code, elapsed time, and an
-  ignored local screenshot path, and keep the local task for retry.
-- Tencent Docs writes are backed up locally before replacement.
+## 状态与身份
 
-## Module boundaries
+会话由角色/平台、会话位置、发送者共同限定。群聊成员各自继续，群聊与私聊分离。姓名绑定不授予权限；不使用某个默认姓名代替发起人。昵称仅能提供身份线索，关键身份仍须本人确认。
 
-- `bridge.cjs` orchestrates WeCom messages, Codex jobs, and the local task queue.
-- `lib/wecom-long-connection.cjs` owns authentication, ACK routing, heartbeat,
-  and reconnect backoff.
-- `lib/usage-tracker.cjs`, `lib/answer-cache.cjs`, and `lib/help-router.cjs`
-  contain side-effect-focused helpers.
-- `worker/src/platforms/feishu-browser` owns all browser automation.
-- `worker/src/legacy/feishu-base` is historical Open API code and is not imported
-  by the default runtime.
+状态包括授权、个人身份、消息防重、待确认问题、短号和原始工单证据，可能含敏感数据。清理任务只变更本地追踪和相关续聊状态，保留取消/查重保护，不删除已写在线记录。
+
+## 一致性和失败
+
+任务串行，但本机锁不能锁住其他在线编辑者。任务列表序号在填写及提交前检查；单号查重双号齐全取组合，单号取单值。不得复用打开的已有记录卡。
+
+查重视图不完整、目标不符、写入结果不明均停止自动重试。普通工单以提交读回为依据；共享表测试需要本机单次许可，不能借测试扩大正式写入。
+
+腾讯新行必须整行空白，写前备份、写后核对。已有同班交接行先保存合并提案供本机确认，正式表不自动改；旧“清空重写/自动保留两班”不是当前追加仓库的操作说明。
+
+工单进度含排队、识别、实际飞书核对和最终回执；收到回调或进度不代表建单成功。匿名统计分别记录处理器返回、需澄清、保护核验、未知提交和已核验登记，不能合并为成功率。
+
+## 部署与验收
+
+主进程、守护各自单实例端口；本机健康检查和互联网重连分开。排班不加载工单执行器。Windows同账号下拆进程并非系统安全隔离。
+
+独立服务目录和共享worker可能存在版本差异；升级先核对清单与基线，不整仓覆盖其他工作区。先做合成状态、实际配置CLI零写入检查，再做明确授权的在线验收。当前证据和未验收项见[项目状态](PROJECT_STATUS.md)。
+
+参考[按钮协议](interaction-cards.md)、[匿名统计](observability.md)、[权限](remote-safety.md)。不新增遥测服务或模型汇总调用；实际模型、硬件与网络成本仍需测量。

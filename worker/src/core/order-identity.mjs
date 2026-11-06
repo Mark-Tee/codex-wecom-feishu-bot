@@ -1,5 +1,5 @@
 export function orderIdentifiers(card={}) {
- const clean=value=>String(value||"").replace(/[\u200B-\u200D\u2060\uFEFF]/gu,"").trim().toUpperCase();
+ const clean=value=>{const text=String(value||"").replace(/[\u200B-\u200D\u2060\uFEFF]/gu,"").trim().toUpperCase();return text==="无"?"":text;};
  return {transactionNo:clean(card.transactionNo),roomTicketNo:clean(card.roomTicketNo)};
 }
 export function sameBusinessOrder(a,b) {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import {extractionPolicy,extractionEnvironment,EXTRACTION_INSTRUCTIONS} from "./extraction-policy.mjs";
 import { resolveTencentDocsToken } from "../providers/tencent-docs/client.mjs";
 export { extractDutyJson as extractJsonObject } from "./duty-output.mjs";
 
@@ -26,13 +27,15 @@ export function resolveCodexExecutable(explicit = "") {
   return candidates[0] || "codex";
 }
 
-function outputMessages(output) {
+export function outputMessages(output) {
   const messages = [];
   let threadId = "";
+  let usage = null;
   for (const line of String(output || "").split(/\r?\n/)) {
     if (!line.trim().startsWith("{")) continue;
     try {
       const event = JSON.parse(line);
+      if (event.type === "turn.completed") usage = event.usage || null;
       if (event.type === "thread.started" && event.thread_id) threadId = event.thread_id;
       if (
         event.type === "item.completed"
@@ -43,7 +46,7 @@ function outputMessages(output) {
       }
     } catch {}
   }
-  return { messages, threadId };
+  return { messages, threadId, usage };
 }
 
 export class CodexRunner {
@@ -68,7 +71,7 @@ export class CodexRunner {
     } else {
       args.push("exec", "-C", this.config.runtime.workdir, "--skip-git-repo-check", "--color", "never");
     }
-    if (this.config.duty.enabled) {
+    if (this.config.duty.enabled && !fastDuty) {
       tuning.push("-c", `sandbox_workspace_write.writable_roots=${JSON.stringify([this.config.runtime.specRoot])}`);
     }
     if (reasoningEffort) {
@@ -77,22 +80,24 @@ export class CodexRunner {
     if (fastDuty) {
       tuning.push("-c", 'model_verbosity="low"', "-c", 'model_reasoning_summary="none"');
     }
+    const environment=fastDuty?extractionEnvironment(process.env):this.#environment();
+    if(fastDuty){try{tuning.push(...extractionPolicy(this.executable,{cwd:this.config.runtime.workdir,env:environment}));}catch{return Promise.resolve({ok:false,text:"无法核验工单识别权限，已停止；请联系维护者，不要重复提交。",seconds:0});}}
     args.push(
-      "-c", 'sandbox_mode="workspace-write"',
+      "-c", `sandbox_mode="${fastDuty?"read-only":"workspace-write"}"`,
       "-c", 'approval_policy="never"',
-      "-c", "sandbox_workspace_write.network_access=true",
+      "-c", `sandbox_workspace_write.network_access=${!fastDuty}`,
       ...tuning,
-      "-c", `developer_instructions=${JSON.stringify(DEFAULT_INSTRUCTIONS)}`,
+      "-c", `developer_instructions=${JSON.stringify(fastDuty?EXTRACTION_INSTRUCTIONS:DEFAULT_INSTRUCTIONS)}`,
     );
     for (const image of images) args.push("-i", image);
-    args.push("--json", prompt);
+    args.push("--json", "--", prompt);
 
     return new Promise((resolve) => {
       const started = Date.now();
       const child = spawn(this.executable, args, {
         cwd: this.config.runtime.workdir,
         windowsHide: true,
-        env: this.#environment(),
+        env: environment,
         stdio: ["ignore", "pipe", "pipe"],
       });
       this.currentProcess = child;
@@ -132,6 +137,7 @@ export class CodexRunner {
           text: parsed.messages.join("\n\n") || stdout.trim(),
           seconds,
           threadId: parsed.threadId || threadId,
+          usage: parsed.usage,
         });
       });
     });

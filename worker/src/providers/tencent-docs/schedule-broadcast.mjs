@@ -9,7 +9,7 @@ function column(n) {
   while (n > 0) { result = String.fromCharCode(65 + (n - 1) % 26) + result; n = Math.floor((n - 1) / 26); }
   return result;
 }
-const clean = (value) => String(value).replace(/[\r\n<>`*_\[\]]/g, " ");
+const clean = (value) => String(value).replace(/（(?:原表空白，按排班规则|按前日夜班及空白排班)）/gu, "").replace(/[\r\n<>`*_\[\]]/g, " ");
 
 export function summarizeSchedule({ rows, styles, date, config }) {
   const headers = (rows[0] || []).map((v) => String(v).trim());
@@ -61,6 +61,10 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     return {name: group.name, white, night, auxiliary: auxiliary.allowed ? aux : null, offsite, offsiteRole: group.offsite_role, standby};
   });
   for (const name of [...power.white, ...power.night]) if (offsiteNames.has(name)) throw new Error("动力与异地岗位冲突");
+  const calendarDate = new Date(`${date.slice(0,4)}-${date.slice(4,6)}-${date.slice(6,8)}T00:00:00Z`);
+  const previousDate = dateKey(addDays(calendarDate,-1));
+  const previousRows = rows.slice(1).filter(item=>String(item[headers.indexOf("日期")] || "").trim()===previousDate);
+  const previous = previousRows.length===1 ? previousRows[0] : null;
   const people = departments.flatMap((department) => department.members.map((name) => {
     const group = groups.find((item) => item.name === department.name);
     const raw = String(row[headers.indexOf(name)] || "").trim();
@@ -76,12 +80,35 @@ export function summarizeSchedule({ rows, styles, date, config }) {
     const homeRole = roles.length > 0 && !offsite;
     if (power.white.includes(name)) roles.push("动力白班");
     if (power.night.includes(name)) roles.push("动力夜班");
-    const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw);
-    if (leave) roles.push(raw);
+    const blankRest = !raw && !roles.length;
+    const afterNight = previous && (String(previous[headers.indexOf(name)] || "").trim()===config.schedule.primary_night_value || rosterNames(previous[headers.indexOf("动力夜班值班人员")]).includes(name));
+    const restReason = blankRest ? afterNight ? "下夜班休息（按前日夜班及空白排班）" : [0,6].includes(calendarDate.getUTCDay()) ? "周末休息（原表空白，按排班规则）" : "休息（原表空白，按排班规则）" : "";
+    const leave = /^(?:调休|休假|休息|年假|事假|病假)$/.test(raw) || blankRest;
+    if (leave) roles.push(restReason || raw);
     if (!roles.length) roles.push(raw ? `${raw}（岗位待核对）` : "原表空白，需结合前夜排班核对");
-    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave};
+    const shiftKind=raw===config.schedule.primary_white_value ? "white" : raw===config.schedule.primary_night_value ? "night" : "";
+    return {name, department:department.name, roles, site:offsite ? config.site_rules.offsite_site : homeRole ? config.site_rules.home_site : "", leave, restReason, shiftKind, offsite:Boolean(offsite)};
   }));
   return {date, groups, power, warnings, people};
+}
+
+export async function readScheduleSheet({client,config,source,sheet,dates}) {
+  if (!sheet || !Number.isSafeInteger(Number(sheet.row_count)) || Number(sheet.row_count)<1 || !Number.isSafeInteger(Number(sheet.col_count)) || Number(sheet.col_count)<1)throw Error("排班工作表缺失或大小无效");
+  const range=`A1:${column(Number(sheet.col_count))}${sheet.row_count}`;
+  const csv=await client.getCsv(source,sheet.sheet_id,range);
+  if(typeof csv.csv_data!=="string")throw Error("实时排班读取失败，不使用缓存");
+  const styleResult=await client.getStyles(source,sheet.sheet_id,range);
+  if(!Array.isArray(styleResult.cells)||!styleResult.cells.length)throw Error("排班颜色读取失败");
+  const confirm=await client.getCsv(source,sheet.sheet_id,range);
+  if(confirm.csv_data!==csv.csv_data)throw Error("读取期间排班发生变化，下次重新核验");
+  const confirmStyles=await client.getStyles(source,sheet.sheet_id,range);
+  const rows=parseCsv(csv.csv_data,{preserveEmptyRows:true}),dateColumn=rows[0]?.indexOf("日期")??-1;
+  if(dateColumn<0)throw Error("排班表缺少日期列");
+  const wanted=new Set(dates),relevantRows=new Set(rows.map((row,index)=>wanted.has(String(row[dateColumn]).trim())?index:-1));
+  const relevantColumns=new Set([dateColumn,...config.site_rules.departments.flatMap(group=>group.members.map(name=>rows[0].indexOf(name)))]);
+  const fingerprint=cells=>JSON.stringify(cells.filter(cell=>relevantRows.has(cell.row)&&relevantColumns.has(cell.col)).map(({row,col,background_color})=>[row,col,background_color||""]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]));
+  if(!Array.isArray(confirmStyles.cells)||fingerprint(confirmStyles.cells)!==fingerprint(styleResult.cells))throw Error("读取期间岗位颜色变化，下次重新核验");
+  return {rows,styles:styleResult.cells};
 }
 
 export async function readScheduleBroadcast({ client, config, at = new Date(), offsets = [0, 1] }) {
@@ -96,23 +123,7 @@ export async function readScheduleBroadcast({ client, config, at = new Date(), o
     const sheetName = sheetForDate(date, config.schedule.sheet_format);
     if (!cache.has(sheetName)) {
       const sheet = info.sheets.find((s) => s.sheet_name === sheetName);
-      if (!sheet || !Number.isSafeInteger(Number(sheet.row_count)) || Number(sheet.row_count) < 1 || !Number.isSafeInteger(Number(sheet.col_count)) || Number(sheet.col_count) < 1) throw new Error(`排班工作表缺失或大小无效：${sheetName}`);
-      const range = `A1:${column(Number(sheet.col_count))}${sheet.row_count}`;
-      const csv = await client.getCsv(source, sheet.sheet_id, range);
-      if (typeof csv.csv_data !== "string") throw new Error("实时排班读取失败，不使用缓存");
-      const styleResult = await client.getStyles(source, sheet.sheet_id, range);
-      if (!Array.isArray(styleResult.cells) || !styleResult.cells.length) throw new Error("排班颜色读取失败");
-      const confirm = await client.getCsv(source, sheet.sheet_id, range);
-      if (confirm.csv_data !== csv.csv_data) throw new Error("读取期间排班发生变化，下次重新核验");
-      const confirmStyles = await client.getStyles(source, sheet.sheet_id, range);
-      const parsedRows = parseCsv(csv.csv_data);
-      const relevantDates = new Set(offsets.map((value) => dateKey(addDays(today, value))));
-      const dateColumn = parsedRows[0].indexOf("日期");
-      const relevantRows = new Set(parsedRows.map((row,index) => relevantDates.has(String(row[dateColumn]).trim()) ? index : -1));
-      const relevantColumns = new Set([dateColumn, ...config.site_rules.departments.flatMap((group) => group.members.map((name) => parsedRows[0].indexOf(name)))]);
-      const fingerprint = (cells) => JSON.stringify(cells.filter((cell) => relevantRows.has(cell.row) && relevantColumns.has(cell.col)).map(({row,col,background_color}) => [row,col,background_color || ""]).sort((a,b) => a[0]-b[0] || a[1]-b[1]));
-      if (!Array.isArray(confirmStyles.cells) || fingerprint(confirmStyles.cells) !== fingerprint(styleResult.cells)) throw new Error("读取期间岗位颜色变化，下次重新核验");
-      cache.set(sheetName, {rows: parsedRows, styles: styleResult.cells});
+      cache.set(sheetName,await readScheduleSheet({client,config,source,sheet,dates:offsets.map(value=>dateKey(addDays(today,value)))}));
     }
     days.push({...summarizeSchedule({...cache.get(sheetName), date: dateKey(date), config}), label:offset === 0 ? "今天" : "明天"});
   }
@@ -182,7 +193,7 @@ export function formatScheduleBroadcast(snapshot, {viewer = ""} = {}) {
     }
     day.warnings.forEach((warning) => lines.push(`⚠ ${clean(warning)}`));
   });
-  lines.push("", "白班 08:30–17:30", "夜班 17:30–次日08:30", "白班辅值 09:00–15:00", "08:30前仍属前一天夜班。", "以上为排班，不代表实际出勤。", "待命人员仅按实际工单陪同。", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`, "调班后可发送“查看排班”重新读取。");
+  lines.push("", "白班08:30–17:30；夜班17:30–次日08:30", "白班辅值09:00–15:00；08:30前属前夜班", `在线表读取：${new Date(snapshot.fetchedAt).toLocaleString("zh-CN", {timeZone:"Asia/Shanghai", hour12:false})}`);
   const text = lines.join("\n");
   if (Buffer.byteLength(text, "utf8") > 3900) throw new Error("排班通知过长，停止发送以免截断");
   return text;

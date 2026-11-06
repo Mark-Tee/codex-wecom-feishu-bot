@@ -1,4 +1,5 @@
 import {readOrderSnapshot,assertNoExistingOrder,reserveOrderAttempt,explicitDuplicateTest} from "./order-guard.mjs";
+import {verifySubmission} from "./submission-readback.mjs";
 import {claimWriteApproval,assertSameWriteTarget,assertEmptyNewRecord} from "./write-approval.mjs";
 import fs from "node:fs";
 import path from "node:path";
@@ -19,6 +20,7 @@ import {
   fieldContainsValueScript,
   fieldSelector,
   optionRectScript,
+  scrollDropdownScript,
   openPersonSelectorScript,
   personOptionRectScript,
   pickerCellPointScript,
@@ -224,6 +226,7 @@ export class FeishuBrowserFormFiller {
     for (let attempt = 0; attempt < 10 && !option; attempt += 1) {
       await sleep(200);
       option = await session.evaluate(optionRectScript(value));
+      if (!option) await session.evaluate(scrollDropdownScript(this.#selector(fieldId), attempt === 0));
     }
     if (!option) throw new Error(`选项不存在：${value}`);
     await session.click(option.x, option.y);
@@ -481,6 +484,7 @@ export class FeishuBrowserFormFiller {
     let session;
     let writeApproval;
     let orderJournal,initialOrderSnapshot;
+    let submissionAttempted = false;
     const dedup=this.config.entryMode==="record" && this.config.orderDeduplication!==false;
     const filled = [];
     const skipped = [];
@@ -688,9 +692,15 @@ export class FeishuBrowserFormFiller {
           if(this.config.entryMode==="record")assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);
           if(writeApproval){assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);writeApproval.mark("submit-started");}
           if(dedup){assertSameWriteTarget(await session.evaluate("location.href"),this.config.formUrl);orderJournal.mark("submit-started");}
+          submissionAttempted = true;
           submitted = await this.#submit(session);
           if(submitted)orderJournal?.mark("submitted-awaiting-readback");
           writeApproval?.mark("submit-reported-success-needs-readback");
+          if (submitted && this.config.entryMode === "record") {
+            stage = "submission-readback";
+            await verifySubmission(session, this.config, card, taskNumber);
+            orderJournal?.mark("submitted-verified");
+          }
         } finally {
           timings["飞书提交"] = Date.now() - submitStartedAt;
         }
@@ -741,6 +751,7 @@ export class FeishuBrowserFormFiller {
         timings: { ...timings, total: Date.now() - startedAt },
         diagnostics,
         message: error.message,
+        submissionAttempted,
         awaitingWriteApproval: stage === "write-approval",
         requiresLocalReview: Boolean(this.config.writeApprovalFile)||Boolean(error.requiresLocalReview)||Boolean(orderJournal),
         pageUrl: this.config.formUrl,

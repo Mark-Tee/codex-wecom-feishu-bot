@@ -69,6 +69,17 @@ function weekly(title = "更换部件") {
 const context = () => ({ shiftDate: "20261102", schedule: [{ date: "20261102", role: { role: "offsite_training", assignment: assignment() } }] });
 const card = (location = "站点B") => ({ location, source: "事务工单", transactionNo: "SJSW20261102000001", roomTicketNo: "JF20261102000001", workContent: "故障维修", specificWork: "更换部件", expectedEnterAt: "2026-11-02 09:00" });
 
+test("明确本地上下架单走共同单号校验，异地不补本地交接或默认工作", () => {
+  const rack = {...card("站点A"), source: "上下架", transactionNo: "SXJXQ202611020000001", workContent: "设备上下架"};
+  const spec = {weeklyRows: [weekly("设备上架")], handoverRows: [["不得保留的默认交接"]]};
+  const result = applySiteRecordRules(spec, {context: context(), fillCard: rack, config});
+  assert.equal(result.skipHomeDraft, false);
+  assert.deepEqual(result.spec.weeklyRows, spec.weeklyRows);
+  assert.deepEqual(result.spec.handoverRows, []);
+  assert.equal(applySiteRecordRules(spec, {context: context(), fillCard: {...rack, transactionNo: "", roomTicketNo: ""}, config}).skipHomeDraft, true);
+  assert.equal(applySiteRecordRules(spec, {context: context(), fillCard: {...rack, location: "站点B"}, config}).skipHomeDraft, true);
+});
+
 test("外派默认记录全部移除；明确本地实际工单只留该条周报，不生成交接", () => {
   const spec = { weeklyRows: [weekly()], handoverRows: [["模型自动生成的交接"]] };
   const result = applySiteRecordRules(spec, { context: context(), fillCard: card(), config });

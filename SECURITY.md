@@ -18,8 +18,9 @@ public issue.
 
 ## Trust Boundary
 
-This bot runs Codex and browser automation on the host machine. Only pair WeCom
-users you trust. The included browser integration uses a dedicated persistent
+The ticket bot runs Codex and browser automation on the host machine. Configure
+trusted operators locally; remote pairing and administration are not part of
+the current split-role interface. The included browser integration uses a dedicated persistent
 browser profile; do not point it at your normal browser profile.
 
 Feishu Browser is used only after the user explicitly enables it. By default the
@@ -31,3 +32,9 @@ bridge does not submit forms unless both `feishuBrowser.enabled` and
 Do not open a public issue containing credentials or business data. Revoke the
 affected credential first, then report the issue with sanitized reproduction
 steps.
+
+## Session and telemetry boundaries
+
+Identity binding does not grant authorization. Buttons are scoped to their creator, conversation, role and expiration; local task clearing cannot delete or undo online records. Original state and diagnostic logs may contain business evidence even though new anonymous statistics exclude message content, images, names and account IDs.
+
+Do not upload anonymous event files or reports to Git either. Suggestions are generated locally and reviewed by a maintainer; the bot does not autonomously change permissions, source tables, code or deployments. See [telemetry](docs/observability.md) and [remote safety](docs/remote-safety.md).

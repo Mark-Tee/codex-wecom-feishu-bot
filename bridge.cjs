@@ -32,9 +32,17 @@ const WSImpl = (() => {
   return globalThis.WebSocket;
 })();
 
+const {parseInbound,createIngressGuard}=require("./lib/input-guard.cjs");
+const {downloadImage,mediaPath}=require("./lib/safe-media.cjs");
+const {localRequest,readNotification}=require("./lib/local-http.cjs");
 const ROOT = __dirname;
+const {createObservability}=require("./lib/observability.cjs");
+const observability=createObservability({root:ROOT,role:"ticket"});
+observability.flush();
 const {readServiceProfile} = require("./lib/service-profile.cjs");
-const {ticketRoute,normalizeTicketCommand,TICKET_HELP} = require("./lib/ticket-policy.cjs");
+const {ticketRoute,normalizeTicketCommand,TICKET_HELP,ticketBusyReply} = require("./lib/ticket-policy.cjs");
+const {createInteractionCards}=require("./lib/interaction-cards.cjs");
+const {createTaskProgress,progressReader,taskStreamId}=require("./lib/task-progress.cjs");
 const DATA_ROOT = process.env.CODEX_FEISHU_DATA_DIR || path.join(ROOT, "data");
 const configArgumentIndex = process.argv.indexOf("--config");
 const CONFIG_PATH = configArgumentIndex >= 0
@@ -73,6 +81,7 @@ function localTimestamp() {
 }
 
 function log(...parts) {
+  observability.system(parts);
   const line = `[${localTimestamp()}] ${parts.join(" ")}`;
   console.log(line);
   try {
@@ -260,6 +269,11 @@ const connection = new WeComLongConnection({
   onFrame: handleFrame,
 });
 
+const interactionCards=serviceProfile.role==="ticket"?createInteractionCards({role:"ticket",state,save:saveState,send,help:TICKET_HELP,log,
+ authorized:user=>cfg.allowUsers.length?cfg.allowUsers.includes(user):(state.__operators||[]).includes(user),
+ reply:(frame,text)=>replyText({...frame,__plainHelp:true},text),dispatch:frame=>handleText(frame),
+}):null;
+
 function send(cmd, body, rid) {
   return connection.send(cmd, body, rid);
 }
@@ -293,6 +307,10 @@ function markUsageSent(key) {
 }
 
 async function replyStream(sourceFrame, streamId, content, finish) {
+  if(sourceFrame.__cardAction){
+    if(!finish)return;
+    const body=sourceFrame.body;return send("aibot_send_msg",{chatid:body.chattype==="group"?body.chatid:body.from.userid,chat_type:body.chattype==="group"?2:1,msgtype:"markdown",markdown:{content:String(content||"").slice(0,MAX_REPLY_BYTES)}});
+  }
   const body = {
     msgtype: "stream",
     stream: {
@@ -310,6 +328,7 @@ async function replyStream(sourceFrame, streamId, content, finish) {
 }
 
 async function replyText(sourceFrame, content) {
+  if(interactionCards&&content===TICKET_HELP&&!sourceFrame.__plainHelp)return interactionCards.menu(sourceFrame);
   // aibot_respond_msg 不接受 msgtype=text（会返回 40008），统一用一次性 stream 回复。
   try {
     return await replyStream(sourceFrame, reqId("stream"), String(content || ""), true);
@@ -429,7 +448,7 @@ function runCodex(prompt, threadId, images = []) {
     ];
     const imageArgs = images.flatMap((p) => ["-i", p]);
     const args = threadId
-      ? ["exec", "resume", threadId, ...devArgs, "--skip-git-repo-check", ...imageArgs, "--json", prompt]
+      ? ["exec", "resume", threadId, ...devArgs, "--skip-git-repo-check", ...imageArgs, "--json", "--", prompt]
       : [
           "exec",
           "-C",
@@ -440,6 +459,7 @@ function runCodex(prompt, threadId, images = []) {
           ...devArgs,
           ...imageArgs,
           "--json",
+          "--",
           prompt,
         ];
     log(threadId ? `codex resume ${threadId.slice(0, 8)}:` : "codex exec start:", prompt.slice(0, 80));
@@ -547,7 +567,7 @@ function dutyAgentConfigError() {
   return missing.length ? `值班代理缺少文件：${missing.join("，")}` : "";
 }
 
-function runDutyAgent(message) {
+function runDutyAgent(message,{onStage=()=>{}}={}) {
   return new Promise((resolve, reject) => {
     const configError = dutyAgentConfigError();
     if (configError) {
@@ -566,6 +586,7 @@ function runDutyAgent(message) {
     );
     let out = "";
     let err = "";
+    const readStage=progressReader(onStage);
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
       reject(new Error(`值班代理超时（>${Math.round(cfg.dutyAgent.timeoutMs / 1000)}s）`));
@@ -576,6 +597,7 @@ function runDutyAgent(message) {
     });
     child.stderr.on("data", (data) => {
       err += data.toString("utf8");
+      readStage(data.toString("utf8"));
       if (err.length > 500000) err = err.slice(-500000);
     });
     child.on("error", (error) => {
@@ -744,53 +766,28 @@ async function updateTencentDraft(specPath) {
   return { updateResult, verifyResult, draftUrl };
 }
 
-async function processDutyAgentTask({ frame, prompt, chatKey, userId, images = [], ocrText = "" }) {
-  const streamId = reqId("stream");
-  const startedAt = Date.now();
-  const body = frame.body || {};
-  const chatId = body.chatid || (body.from && body.from.userid) || chatKey;
-  const chatType = body.chattype === "group" ? "group" : "single";
-  const progressTimer = setInterval(() => {
-    const secs = Math.round((Date.now() - startedAt) / 1000);
-    replyStream(frame, streamId, `机器人仍在处理工单…已运行 ${secs} 秒`, false).catch(() => {});
-  }, 15000);
-
-  try {
-    await replyStream(
-      frame,
-      streamId,
-      "收到工单，正在识别字段并核对处理条件…",
-      false,
-    ).catch(() => {});
-    const result = await runDutyAgent({
-      id: body.msgid || reqId("duty"),
-      chatId,
-      chatType,
-      userId: userId || "unknown",
-      platform: "wecom",
-      text: prompt,
-      images: images.map((imagePath) => ({ path: imagePath, text: "" })),
-      ocrText,
-      receivedAt: localTimestamp(),
-    });
-    const replies = Array.isArray(result.replies) ? result.replies : [];
-    const finalReply = [...replies].reverse().find((reply) => reply.kind === "final")
-      || [...replies].reverse().find((reply) => reply.text);
-    const text = finalReply?.text || "值班代理已结束，但没有返回结果。";
-    await replyStream(frame, streamId, truncate(text), true);
-    log("duty agent done", `${Math.round((Date.now() - startedAt) / 1000)}s`);
-  } catch (error) {
-    const failureRef = reqId("duty-error");
-    log("duty agent failed", failureRef, error.message);
-    await replyStream(
-      frame,
-      streamId,
-      dutyErrorReply(error, failureRef),
-      true,
-    ).catch(() => {});
-  } finally {
-    clearInterval(progressTimer);
-  }
+async function processDutyAgentTask({frame,prompt,chatKey,userId,images=[],ocrText="",queueAck}) {
+  const streamId=taskStreamId(frame),startedAt=Date.now(),body=frame.body||{},local=/^\/forget(?:\s|$)/i.test(prompt);
+  const progress=createTaskProgress(async(text,final,action)=>{
+    if(final&&interactionCards&&await interactionCards.confirmation(frame,text,action))return;
+    return replyStream(frame,streamId,truncate(text),final);
+  },{initial:images.length?"正在识别工单…":"正在处理本人任务…",log:error=>log("任务状态更新失败",error.message)});
+  let progressTimer=null;
+  try{
+    await queueAck;
+    if(!local&&!frame.__cardAction)progressTimer=setInterval(()=>progress.heartbeat(Math.round((Date.now()-startedAt)/1000)),15000);
+    if(!local&&!frame.__cardAction)await progress.start().catch(()=>{});
+    const result=await runDutyAgent({id:body.msgid||reqId("duty"),chatId:body.chatid||body.from?.userid||chatKey,chatType:body.chattype==="group"?"group":"single",userId:userId||"unknown",platform:"wecom",boundOperator:accessRequests.identity(userId,body.chattype==="group"?body.chatid:"private:"+userId),text:prompt,images:images.map(path=>({path,text:""})),ocrText,receivedAt:localTimestamp()},{onStage:stage=>progress.stage(stage)});
+    for(const outcome of Array.isArray(result.observations)?result.observations:[])observability.mark(frame,outcome);
+    for(const error of Array.isArray(result.errors)?result.errors:[])observability.record({type:"error",error});
+    const replies=Array.isArray(result.replies)?result.replies:[],finalReply=[...replies].reverse().find(reply=>reply.kind==="final")||[...replies].reverse().find(reply=>reply.text);
+    await progress.finish(finalReply?.text||"值班代理已结束，但没有返回结果。",finalReply?.action);
+    log("duty agent done",Math.round((Date.now()-startedAt)/1000)+"s");
+  }catch(error){
+    observability.mark(frame,"failed");
+    const failureRef=reqId("duty-error");log("duty agent failed",failureRef,error.message);
+    await progress.finish(dutyErrorReply(error,failureRef)).catch(()=>{});
+  }finally{clearInterval(progressTimer);observability.finish(frame,"worker_returned",true);}
 }
 
 async function processDutyDraftTask({ frame, prompt, chatKey, userId, images = [], dutyDraft }) {
@@ -1141,11 +1138,17 @@ async function sendChatMessage(chatid, chatType, text) {
 }
 
 async function handleText(frame, images = [], extraText = "", ocrText = "") {
+  try{return await handleTextImpl(frame,images,extraText,ocrText);}
+  catch(error){observability.mark(frame,"failed");throw error;}
+  finally{observability.finish(frame);}
+}
+async function handleTextImpl(frame, images = [], extraText = "", ocrText = "") {
   const body = frame.body || {};
   if (!body.msgid) return;
   // 断线重连后服务端可能重推同一条消息，去重记录持久化到 state.json。
   if (!Array.isArray(state.__seenIds)) state.__seenIds = [];
   if (state.__seenIds.includes(body.msgid)) return;
+  observability.start(frame);
   state.__seenIds.push(body.msgid);
   if (state.__seenIds.length > 300) state.__seenIds = state.__seenIds.slice(-300);
   saveState(state);
@@ -1156,8 +1159,9 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const rosterNormalized = normalizeRosterCommand(stripMentions((body.text && body.text.content) || extraText || ""));
   const originalPrompt = serviceProfile.role === "ticket" ? normalizeTicketCommand(rosterNormalized) : rosterNormalized;
   const denied=remoteDenial(originalPrompt);
-  if(denied){await replyText(frame,denied);return;}
+  if(denied){observability.mark(frame,"denied");await replyText(frame,denied);return;}
   if (cfg.allowUsers.length && !cfg.allowUsers.includes(userId)) {
+    observability.mark(frame,"denied");
     log("ignore user", userId);
     return;
   }
@@ -1177,7 +1181,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
   if (!prompt || (images.length === 0 && isMenuPrompt(originalPrompt))) {
     if (serviceProfile.role === "ticket" && body.chattype === "single" && (cfg.allowUsers.length ? cfg.allowUsers.includes(userId) : (state.__operators || []).includes(userId))) {
-      await processDutyAgentTask({frame,prompt:"首页",chatKey:JSON.stringify(["ticket",body.chatid || userId,userId]),userId,images:[]}); return;
+      await interactionCards.menu(frame);return;
     }
     await replyText(frame, serviceProfile.role === "ticket" ? TICKET_HELP : ROSTER_HELP).catch((e) => log("reply fail", e.message));
     return;
@@ -1212,6 +1216,7 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   }
 
   if (!isOperator) {
+    observability.mark(frame,"denied");
     await replyText(frame, "你还没有配对。请在电脑上查看 pairing-code.txt，然后发送 /pair <配对码>。").catch(() => {});
     log("unauthorized user", userId);
     return;
@@ -1219,6 +1224,8 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
 
   if (serviceProfile.role === "ticket") {
     const route = ticketDecision;
+    const busyReply=ticketBusyReply(prompt,jobRunning);
+    if(busyReply){await replyText(frame,busyReply);return;}
     if (route === "roster") { await replyText(frame, "这是工单机器人，排班查询请@排班机器人。"); return; }
     if (route === "help" || /^(?:\/help(?:\s|$)|帮助$)/i.test(prompt)) { await replyText(frame, TICKET_HELP); return; }
   }
@@ -1308,13 +1315,14 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
   const dutyAgentCommand = /^\/(done|fill|pending|cancel)(?:\s|$)/i.test(prompt);
   const useDutyAgent = cfg.dutyAgent.enabled && (dutyIntent || dutyAgentCommand);
   if (useDutyAgent) {
+    if(taskQueue.length>=10){await replyText(frame,"待处理工单较多，请稍后重试；不要重复提交。");return;}
     const configError = dutyAgentConfigError();
     if (configError) {
       await replyText(frame, `飞书值班代理不可用：${configError}`).catch(() => {});
       log("duty agent setup failed", configError);
       return;
     }
-    taskQueue.push({
+    const queuedTask={
       frame,
       prompt,
       chatKey,
@@ -1322,13 +1330,16 @@ async function handleText(frame, images = [], extraText = "", ocrText = "") {
       images,
       ocrText,
       dutyAgent: true,
-    });
+    };
+    observability.defer(frame);
+    taskQueue.push(queuedTask);
     if (jobRunning) {
       const ahead = taskQueue.length - 1;
-      await replyText(
-        frame,
-        ahead > 0 ? `已排队，前面还有 ${ahead} 个任务，轮到你马上开始。` : "已排队，上一个任务结束后马上开始。",
+      queuedTask.queueAck=replyStream(
+        frame,taskStreamId(frame),
+        ahead > 0 ? `已排队，前面还有 ${ahead} 个任务，轮到你马上开始。` : "已排队，上一个任务结束后马上开始。",false,
       ).catch((e) => log("reply fail", e.message));
+      await queuedTask.queueAck;
       return;
     }
     drainQueue().catch((e) => log("queue error", e.message));
@@ -1436,22 +1447,7 @@ async function drainQueue() {
   }
 }
 
-function safeParse(raw) {
-  try {
-    return JSON.parse(raw);
-  } catch {}
-  // 企业微信可能推送未转义的控制字符（\u000b、零宽字符等），先转义再解析（SDK issue #15）。
-  try {
-    const sanitized = String(raw).replace(
-      /[\x00-\x08\x0b\x0c\x0e-\x1f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2060-\u206f\ufeff\ufff9-\ufffb]/g,
-      (ch) => "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0"),
-    );
-    return JSON.parse(sanitized);
-  } catch (e) {
-    log("bad frame", e.message, String(raw).slice(0, 120));
-    return null;
-  }
-}
+function safeParse(raw) {return parseInbound(raw);}
 
 function decryptWecomBuffer(buf, aesKey) {
   const key = Buffer.from(aesKey, "base64");
@@ -1470,14 +1466,9 @@ function decryptWecomBuffer(buf, aesKey) {
 
 async function downloadAndDecryptImage(image, msgid) {
   if (!image || !image.url) return null;
-  const res = await fetch(image.url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  let buf = Buffer.from(await res.arrayBuffer());
+  let buf = await downloadImage(image.url);
   if (image.aeskey) buf = decryptWecomBuffer(buf, image.aeskey);
-  const isPng = buf[0] === 0x89 && buf[1] === 0x50;
-  const isJpg = buf[0] === 0xff && buf[1] === 0xd8;
-  const ext = isPng ? ".png" : isJpg ? ".jpg" : ".bin";
-  const file = path.join(IMAGE_DIR, `${msgid || Date.now()}${ext}`);
+  const file = mediaPath(IMAGE_DIR,buf);
   fs.writeFileSync(file, buf);
   log("image saved", file, Math.round(buf.length / 1024) + "KB");
   return file;
@@ -1525,12 +1516,32 @@ async function collectImages(body) {
         }
       }
     } catch (e) {
-      log("image download failed", e.message);
+      log("image download failed", "图片下载或校验失败");
+      const failure=Error("图片下载或校验未完成");failure.code="MEDIA_REJECTED";throw failure;
     }
   }
   return { paths, texts };
 }
 
+const {createAccessRequests}=require("./lib/access-request.cjs");
+const accessRequests=createAccessRequests({state,save:saveState,members:()=>{
+  const agent=JSON.parse(fs.readFileSync(cfg.dutyAgent.configPath,"utf8").replace(/^\uFEFF/,""));
+  const file=cfg.dutyReport.configPath||path.resolve(cfg.dutyAgent.repoPath,agent.duty.configPath);
+  return JSON.parse(fs.readFileSync(file,"utf8").replace(/^\uFEFF/,"")).line.team_members;
+},people:()=>{
+  const file=path.join(cfg.dutyAgent.repoPath,"state.json");
+  if(!fs.existsSync(file))return [];
+  return Object.entries(JSON.parse(fs.readFileSync(file,"utf8")).__operatorByChat__||{}).flatMap(([key,name])=>{try{const parts=JSON.parse(key);return parts.length===3?[{user:parts[2],name}]:[];}catch{return [];}});
+},reply:replyText,role:"ticket",allowUsers:cfg.allowUsers,secret:cfg.secret,port:serviceProfile.healthPort});
+const ingress=createIngressGuard({authorized:accessRequests.authorized,allowRequest:accessRequests.allows});
+async function guardedFrame(frame,work){
+  const verdict=ingress.check(frame);
+  const target={...frame,__cardAction:frame?.cmd==="aibot_event_callback",body:{...frame?.body,chattype:frame?.body?.chattype||(frame?.body?.chatid?"group":"single")}};
+  if(!verdict.ok){log("输入已拒绝",verdict.code);if(verdict.reply)await replyText(target,verdict.text).catch(()=>{});return;}
+  try{if(await accessRequests.request(frame))return;if(["image","mixed"].includes(frame.body.msgtype)&&taskQueue.length>=10){await replyText(target,"待处理工单较多，请稍后重试；不要重复提交。");return;}return await work();}
+  catch(error){log("输入处理异常，已隔离");await replyText(target,error.code==="MEDIA_REJECTED"?"图片下载或校验未完成，尚未处理工单。请稍后重发PNG/JPEG截图，每张≤16MiB；仍失败时联系维护者。":"请求未完成，请按上一条提示操作；若无提示，联系维护者核验，勿重复提交。").catch(()=>{});}
+  finally{verdict.release();}
+}
 function mixedText(body) {
   if (body.msgtype === "mixed" && body.mixed && Array.isArray(body.mixed.msg_item)) {
     return body.mixed.msg_item.filter((i) => i.msgtype === "text" && i.text).map((i) => i.text.content).join("\n");
@@ -1539,28 +1550,25 @@ function mixedText(body) {
 }
 
 function handleFrame(frame) {
+  if(interactionCards&&frame?.cmd==="aibot_event_callback"&&frame.body?.event?.eventtype==="template_card_event"){
+    guardedFrame(frame,()=>interactionCards.handle(frame)).catch(()=>log("按钮处理失败"));return;
+  }
   if (!frame) return;
   if (frame.cmd) log("frame", frame.cmd);
   switch (frame.cmd) {
     case "aibot_msg_callback": {
-      const type = frame.body && frame.body.msgtype;
-      log("message type", type, frame.body && frame.body.chattype ? frame.body.chattype : "?");
-      if (type === "text") {
-        handleText(frame).catch((e) => log("text handler error", e.message));
-      } else if (type === "image" || type === "mixed") {
-        (async () => {
-          const collected = await collectImages(frame.body);
-          await handleText(frame, collected.paths, mixedText(frame.body), collected.texts.join("\n"));
-        })().catch((e) => log("image handler error", e.message));
-      } else {
-        replyText(frame, `暂不支持 ${type} 类型，发文字给我。`).catch((e) =>
-          log("unsupported reply fail", e.message),
-        );
-      }
+      frame.__observedAt=Date.now();
+      guardedFrame(frame,async()=>{
+        const type=frame.body.msgtype;
+        if(type==="text")return handleText(frame);
+        const collected=await collectImages(frame.body);
+        return handleText(frame,collected.paths,mixedText(frame.body),collected.texts.join("\n"));
+      }).catch(()=>log("消息处理失败，已隔离"));
       break;
     }
     case "aibot_event_callback": {
       const ev = frame.body && frame.body.event && frame.body.event.eventtype;
+      if(typeof ev!=="string"){log("事件格式错误");break;}
       log("event", ev || "unknown");
       if (ev === "enter_chat") {
         replyWelcome(frame).catch((e) => log("welcome fail", e.message));
@@ -1574,11 +1582,13 @@ function handleFrame(frame) {
 
 function startNotifyServer(onReady) {
   const server = http.createServer((req, res) => {
+    if(accessRequests.local(req,res))return;
+    if(!localRequest(req,serviceProfile.healthPort)){res.writeHead(403);res.end("Forbidden");return;}
     if (req.method === "GET" && req.url === "/health") {
       const connectionHealth = connection.healthWatch?.snapshot();
       res.writeHead(200, {"content-type":"application/json", "cache-control":"no-store"});
       res.end(JSON.stringify({service:"codex-wecom-bridge", serviceId:crypto.createHash("sha256").update(ROOT).digest("hex"), pid:process.pid, role:serviceProfile.role, authenticated:connection.authenticated,
-        uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild),
+        uptimeSeconds:Math.floor(process.uptime()), busy:Boolean(currentChild)||jobRunning||ingress.status().running>0,observability:observability.status(),
         connectionStale:Boolean(connectionHealth && Date.now() - connectionHealth.lastReceivedAt > 300_000)}));
       return;
     }
@@ -1587,31 +1597,23 @@ function startNotifyServer(onReady) {
       res.end(JSON.stringify({ ok: false, error: "not found" }));
       return;
     }
-    let raw = "";
-    req.on("data", (c) => {
-      raw += c;
-    });
-    req.on("end", async () => {
-      try {
-        const payload = JSON.parse(raw || "{}");
-        const text = String(payload.text || "Codex 任务结束").trim();
+    readNotification(req).then(async({text})=>{
+      try{
         const last = state.__lastChat__;
         if (!connection.authenticated) throw new Error("bridge 还没连上企业微信");
         if (!last || !last.chatid) throw new Error("还没有会话，先在群里 @ 机器人说一句话");
+        if(!(cfg.allowUsers.length?cfg.allowUsers.includes(last.userid):(state.__operators||[]).includes(last.userid)))throw Error("目标会话未授权");
         await send("aibot_send_msg", {
           chatid: last.chatid,
-          chat_type: last.chatType || 0,
+          chat_type: last.chatType || 1,
           msgtype: "markdown",
           markdown: { content: truncate(text) },
         });
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
-      } catch (e) {
-        log("notify endpoint error", e.message);
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: false, error: e.message }));
-      }
-    });
+
+      }catch{res.writeHead(503);res.end(JSON.stringify({ok:false,error:"通知发送未完成"}));}
+    }).catch(()=>{if(!res.destroyed&&!res.headersSent){res.writeHead(400);res.end(JSON.stringify({ok:false,error:"通知格式、大小或耗时不符合要求"}));}});
   });
   server.on("error", (e) => {
     log(e.code === "EADDRINUSE" ? "已有机器人实例或端口被占用，本实例退出，不重复连接" : "机器人启动端口失败", e.code || "unknown");

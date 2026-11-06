@@ -1,6 +1,11 @@
 // Remote messages may query and use fixed business workflows, never maintain sources.
 function remoteDenial(value) {
-  const text=String(value||"").trim().replace(/^BOT\s+/iu,"");
+  if(typeof value!=="string"||Buffer.byteLength(value)>16384)return "指令格式或长度不符合要求，请发送“菜单”查看用法。";
+  const text=value.normalize("NFKC").replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/gu,"").trim().replace(/^BOT\s+/iu,"");
+  const command=text.match(/^\/([a-z][a-z0-9_-]*)(?:\s|$)/iu);
+  if(command&&!/^(?:help|status|pending|fill|done|as|user|draft|forget)$/iu.test(command[1]))return "无权限或不支持此指令，请发送“菜单”使用固定业务功能。";
+  if(/^\/(?:fill|done)(?:\s|$)/iu.test(text)&&!/^\/(?:fill|done)\s+\d{1,8}$/iu.test(text))return "指令格式错误：请使用“填12”或“完12”，不要附加其他命令。";
+  if(/^\/forget(?:\s|$)/iu.test(text)&&!/^\/forget\s+(?:\d{1,8}|all|confirm(?:\s+[a-f0-9]{64})?|dismiss\s+[a-f0-9]{64})$/iu.test(text))return "指令格式错误：清10；或清全部后按原清单确认。";
   if (/\/(?:pair|invite|paircode|operators|revoke|stop|cancel|new|delete|remove|exec|run|restart|shutdown|config|shell)(?:\s|$)/iu.test(text)
     || /(?:绑定排班群|解绑排班群|停止|停机|重启|新会话|清空队列|取消任务|停止任务|授权|撤销授权|生成邀请码|配对|操作者|撤销操作者|运行脚本|执行命令)/u.test(text))
     return "无权限：群聊和私聊均不支持管理操作，请联系维护者在本机处理。";

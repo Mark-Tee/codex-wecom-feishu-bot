@@ -1,12 +1,15 @@
 import {buildFeishuTestPrompt} from "../core/feishu-test-prompt.mjs";
 import {resolveTaskShiftForWorkOrder,parseExpectedEnterAt} from "../core/task-workflow.mjs";
 import remotePolicy from "../core/remote-policy.cjs";
+import inputGuard from "../core/input-guard.cjs";
 import crypto from "node:crypto";
 import { applySiteRecordRules } from "../core/site-assignment.mjs";
 import { readPowerRoster } from "../providers/tencent-docs/power-roster.mjs";
 import { buildPowerDutyPrompt } from "../core/power-duty-prompt.mjs";
 import fs from "node:fs";
 import path from "node:path";
+import {browserOutcome} from "./observation.mjs";
+import {prepareImageEvidence} from "../platforms/image-evidence.mjs";
 import { buildDutyPrompt } from "../core/duty-prompt.mjs";
 import {
   inferShiftDateFromSpec,
@@ -30,6 +33,7 @@ import { extractDutyJson } from "./duty-output.mjs";
 import { formatHelpText } from "./help-entries.mjs";
 import {
   formatBrowserFillSummary,
+  formatDutyFailure,
   formatPendingTasks,
   formatStatus,
 } from "./output-format.mjs";
@@ -80,6 +84,8 @@ export class ConversationService {
   }
 
   async handle(message, responder) {
+    if(!inputGuard.validateWorkerMessage(message)){await responder.replyText("消息格式或长度不符合要求，请发送菜单查看用法。");return;}
+    message={...message,images:message.images||[]};
     if (!message.userId || !message.chatId || message.userId === "unknown") {
       await responder.replyText("无法识别发起人，未处理任务，请重新发送。"); return;
     }
@@ -103,6 +109,25 @@ export class ConversationService {
       return;
     }
 
+    if (message.boundOperator) {
+      const name=message.boundOperator,existing=this.#getChatValue("operator",message.sessionId);
+      if (this.dutyConfig.line.team_members.filter(value=>value===name).length!==1 || existing&&existing!==name) {
+        await responder.replyText("本机批准的姓名与成员名单或本会话绑定不一致，请维护者核对；未覆盖身份、未处理工单。");return;
+      }
+      if(!existing)this.#setChatValue("operator",message.sessionId,name);
+    }
+    if(/^\/forget(?:\s|$)/i.test(text)){
+      const result=this.#forgetTasks(message.sessionId,text),confirmation=this.#getChatValue("forgetConfirm",message.sessionId);
+      await responder.replyText(result,result.startsWith("将停止追踪本人当前会话")&&confirmation?{action:{kind:"forget-confirm",token:confirmation.digest}}:undefined);return;
+    }
+    const savedTaskCommand = text.match(/^\/(fill|done)\s+#?(\d{1,8})$/i);
+    if (savedTaskCommand && (!this.config.feishuBrowser?.writeApprovalFile || savedTaskCommand[1].toLowerCase() === "done")) {
+      const savedTask = this.pendingTasks.find(savedTaskCommand[2], message.sessionId);
+      if (savedTask?.workflowMode === "feishu-test") {
+        await responder.replyText(`旧测试待办 ${savedTask.id} 已隔离，本次未写在线表。\n下一步：不要用该短号继续正式流程；有新的真实工单时发送新图片，旧测试需要维护者在本机核验。`);
+        return;
+      }
+    }
     this.state.set("__lastChat__", {
       chatId: message.chatId,
       chatType: message.chatType,
@@ -215,6 +240,9 @@ export class ConversationService {
     if (pendingDuty.handled) return;
     if (pendingDuty.task) message = pendingDuty.task;
 
+    if(this.config.duty.enabled&&!isDutyIntent(message.text,message.images)){
+      await responder.replyText("这是工单机器人，只处理工单和本人待办。没有待确认的问题时无需回复是/不是；发送“菜单”查看用法。");return;
+    }
     const task = {
       id: requestId("task"),
       kind: this.config.duty.enabled && isDutyIntent(message.text, message.images)
@@ -315,6 +343,7 @@ export class ConversationService {
       handled: false,
       task: {
         ...message,
+        receivedAt: pending.receivedAt || message.receivedAt,
         text: `${pending.userText}\n【补充说明】${supplement}`,
         images: pending.images,
         ocrText: pending.ocrText,
@@ -335,11 +364,13 @@ export class ConversationService {
         await this.#runGeneral(task);
       }
     } catch (error) {
+      task.responder.observe?.("failed");
+      task.responder.failure?.(error);
       this.logger.error("任务执行失败", error.message);
       await task.responder.replyProgress(
         requestId("stream"),
-        task.kind === "duty" || task.kind === "done"
-          ? `**工单处理未完成**\n\n${error.message}`
+        ["duty", "done", "browser-fill"].includes(task.kind)
+          ? formatDutyFailure(error)
           : `**Codex 执行失败**\n\n${error.message}`,
         true,
       ).catch(() => {});
@@ -349,7 +380,10 @@ export class ConversationService {
   }
 
   async #runDuty(task) {
-    const { message, responder, operator } = task;
+    const { responder, operator } = task;
+    await responder.stage?.("recognizing");
+    let message = task.message;
+    message = await prepareImageEvidence(message, this.config, this.logger);
     const streamId = requestId("stream");
     const receivedAt = message.receivedAt || new Date().toISOString();
     const promptSource = `${message.text || ""}\n${message.ocrText || ""}`;
@@ -370,14 +404,16 @@ export class ConversationService {
     });
     const warning = context.schedule.flatMap((day) => day.warnings || [])[0];
     if (warning) {
+      responder.observe?.("source_conflict");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: warning,
         expiresAt: Date.now() + 15 * 60 * 1000,
       });
-      await responder.replyProgress(streamId, `**需要确认**\n\n${warning}`, true);
+      await responder.replyProgress(streamId, `**需要确认 · 尚未写表**\n\n${warning}\n\n下一步：在当前聊天回复“补充 你确认的内容”；无法确认时联系维护者核对排班。`, true);
       return;
     }
 
@@ -400,25 +436,29 @@ export class ConversationService {
 
     const parsed = extractDutyJson(result.text);
     if (!parsed) {
+      responder.observe?.("recognition_invalid");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: "Codex 未返回可解析 JSON",
         expiresAt: Date.now() + 15 * 60 * 1000,
       });
-      await responder.replyProgress(streamId, "**需要确认**\n\nCodex 未返回可解析草稿，请补充信息。", true);
+      await responder.replyProgress(streamId, "**识别结果未能解析 · 尚未写表**\n\n下一步：把这条回复转给维护者检查识别结果，你暂时无需补充或重复发图。", true);
       return;
     }
     if (parsed.needsClarification) {
+      responder.observe?.("clarification");
       this.#setChatValue("pendingDuty", message.sessionId, {
         userText: message.text,
         images: message.images,
         ocrText: message.ocrText,
+        receivedAt,
         clarification: parsed.needsClarification,
         expiresAt: Date.now() + 15 * 60 * 1000,
       });
-      await responder.replyProgress(streamId, `**需要确认**\n\n${parsed.needsClarification}`, true);
+      await responder.replyProgress(streamId, `**需要确认 · 尚未写表**\n\n${parsed.needsClarification}\n\n下一步：在当前聊天回复“补充 你确认的文字”，例如“补充 机架字母是 I”；只回答上面的问题即可，不必重发图片。`, true);
       return;
     }
 
@@ -433,7 +473,8 @@ export class ConversationService {
       if(!fillCard.specificWork.startsWith("【测试勿统计】"))fillCard.specificWork="【测试勿统计】"+fillCard.specificWork;
     }
     if(feishuTest && !parseExpectedEnterAt(fillCard.expectedEnterAt)){
-      await responder.replyProgress(streamId,"工单原日期或时间不清楚，尚未写入飞书。请核对原图，不用收到日期代替。",true);return;
+      responder.observe?.("clarification");
+      await responder.replyProgress(streamId,"工单原日期或时间不清楚，尚未写入飞书。下一步：重新发送日期和时间清晰的原工单图片，不用收到日期代替。",true);return;
     }
     const sitePolicy = powerOnly || feishuTest ? { assignment: null, skipHomeDraft: false } : applySiteRecordRules(normalized, {
       context, fillCard, config: this.dutyConfig,
@@ -445,6 +486,7 @@ export class ConversationService {
     }
     const identifierErrors = validateDutyIdentifiers(fillCard);
     if (identifierErrors.length) {
+      responder.observe?.("identifiers_invalid");
       await responder.replyProgress(
         streamId,
         [
@@ -470,11 +512,13 @@ export class ConversationService {
         previousDate: context.previousWorkedDate,
         context,
       });
+      responder.observe?.("draft_returned");
       const text = [
         "**腾讯文档草稿已更新**",
-        `使用人 ${operator} · 周报新增 ${normalized.weeklyRows.length} 行 · 交接班新增 ${normalized.handoverRows.length} 行`,
-        `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
+        `使用人 ${operator} · 周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
+        "周报追加，交接按班次汇总；已有交接行先确认，正式表不自动修改。",
         update.fileUrl,
+        "下一步：打开链接核对新增草稿；无需重复发送工单。",
       ].join("\n");
       await responder.replyProgress(streamId, text, true);
       return;
@@ -502,11 +546,15 @@ export class ConversationService {
     let browserStatus = "";
     let browserResult = null;
     if (this.browserFiller?.enabled && this.config.feishuBrowser?.autoFill !== false) {
+      await responder.stage?.("checking");
       browserResult = await this.browserFiller.fill(pending);
+      responder.observe?.(browserOutcome(browserResult,this.config.feishuBrowser));
       pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, browserResult);
       this.pendingTasks.setBrowserFill(pending.id, message.sessionId, browserResult);
       browserStatus = formatBrowserFillSummary(browserResult, {
         autoSubmit: this.config.feishuBrowser?.autoSubmit,
+        taskId: pending.id,
+        testOnly: feishuTest,
       });
     }
     if (sitePolicy.skipHomeDraft) {
@@ -522,8 +570,6 @@ export class ConversationService {
         streamId,
         [
           browserStatus,
-          `本地短号：${pending.id}`,
-          `腾讯草稿请发送：\`/done ${pending.id}\``,
         ].filter(Boolean).join("\n\n"),
         true,
       );
@@ -532,8 +578,9 @@ export class ConversationService {
     await responder.replyProgress(
       streamId,
       [
-        feishuTest ? `【共享表测试：字段已识别】\n本地短号：${pending.id}\n原日期：${fillCard.expectedEnterAt}\n未写入飞书，等待本机核验与单次许可。` : formatFillCard(pending, {
+        feishuTest ? `【共享表测试：字段已识别】\n本地短号：${pending.id}（机器人待办编号，不是飞书单号）\n原日期：${fillCard.expectedEnterAt}\n${browserStatus ? "" : "下一步：联系维护者核验并批准本次写入；你暂时无需操作。"}` : formatFillCard(pending, {
           autoSubmit: Boolean(this.browserFiller?.enabled && this.config.feishuBrowser?.autoSubmit),
+          instructions: !browserStatus,
         }),
         browserStatus,
       ].filter(Boolean).join("\n\n"),
@@ -547,9 +594,9 @@ export class ConversationService {
     }
     await responder.replyProgress(streamId, [
       `当日排班：${pending.siteAssignment.slot} · ${pending.siteAssignment.site} · ${pending.siteAssignment.assignmentType}`,
-      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, skipDraft: true }),
+      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, skipDraft: true, taskId: pending.id }),
       `本地短号：${pending.id}。不自动生成本地站点工作记录或交接班，本地站点打卡不作为工作地点证据。`,
-      result?.submitted ? "无需 /done。" : `飞书未确认提交，核对后可 /fill ${pending.id}。`,
+      !result?.configured ? "下一步：联系维护者检查飞书连接，暂时无需操作。" : "",
     ].filter(Boolean).join("\n\n"), true);
   }
 
@@ -560,9 +607,9 @@ export class ConversationService {
     const text = [
       "**动力值班：仅建飞书单**",
       `按收单时间判断：${pending.powerDuty.date} ${pending.powerDuty.kind}`,
-      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, powerDuty: true }),
+      formatBrowserFillSummary(result, { autoSubmit: this.config.feishuBrowser?.autoSubmit, powerDuty: true, taskId: pending.id }),
       `本地短号：${pending.id}；指派人员、陪同人留空。`,
-      result?.submitted ? "不生成周报和交接班草稿，无需 /done。" : `飞书尚未确认提交，可核对后发送 /fill ${pending.id}。不生成腾讯草稿。`,
+      !result?.configured ? "下一步：联系维护者检查飞书连接，暂时无需操作；本单不生成腾讯草稿。" : "",
     ].filter(Boolean).join("\n\n");
     await responder.replyProgress(streamId, text, true);
   }
@@ -586,7 +633,7 @@ export class ConversationService {
     if (pending.browserFill?.submitted) {
       await responder.replyProgress(
         streamId,
-        `工单短号 ${localTaskId} 已在飞书提交，不会重复填写。提交腾讯草稿请发送 /done ${localTaskId}。`,
+        formatBrowserFillSummary({...pending.browserFill, configured: true}, {taskId: localTaskId, powerDuty: pending.workflowMode === "power-duty", skipDraft: pending.workflowMode === "offsite-feishu", testOnly: Boolean(this.config.feishuBrowser?.writeApprovalFile)}),
         true,
       );
       return;
@@ -610,7 +657,9 @@ export class ConversationService {
         return;
       }
     }
+    await responder.stage?.("checking");
     const result = await this.browserFiller.fill(pending);
+    responder.observe?.(browserOutcome(result,this.config.feishuBrowser));
     pending = this.#reassignTaskIdFromBrowser(pending, message.sessionId, result);
     this.pendingTasks.setBrowserFill(pending.id, message.sessionId, result);
     if (pending.workflowMode === "offsite-feishu") {
@@ -626,8 +675,10 @@ export class ConversationService {
       [
         formatBrowserFillSummary(result, {
           autoSubmit: this.config.feishuBrowser?.autoSubmit,
+          taskId: pending.id,
+          testOnly: Boolean(this.config.feishuBrowser?.writeApprovalFile),
         }),
-        this.config.feishuBrowser?.writeApprovalFile ? "本次只测试飞书，腾讯草稿不写；请等待本机读回核验。" : `提交飞书后发送：\`/done ${localTaskId}\``,
+        this.config.feishuBrowser?.writeApprovalFile ? "本次只测试飞书，腾讯草稿不写。" : "",
       ].filter(Boolean).join("\n\n"),
       true,
     );
@@ -683,20 +734,24 @@ export class ConversationService {
         handoverRows: update.handoverRows,
         keptDates: update.keptDates,
       });
+      responder.observe?.("draft_returned");
       const text = [
         "**腾讯文档草稿已更新**",
         `本地短号 ${localTaskId} · 使用人 ${pending.operator}`,
-        `周报新增 ${spec.weeklyRows.length} 行 · 交接班新增 ${spec.handoverRows.length} 行`,
-        `草稿保留：周报 ${update.weeklyRows} 行、交接班 ${update.handoverRows} 行（${update.keptDates.join(" / ")}）`,
+        `周报新增 ${update.weeklyRows} 行 · 交接班新增 ${update.handoverRows} 行`,
+        "周报追加，交接按班次汇总；已有交接行先确认，正式表不自动修改。",
         update.fileUrl,
+        "下一步：打开链接核对新增草稿；无需重复发送 /done。",
       ].filter(Boolean).join("\n");
       await responder.replyProgress(streamId, text, true);
     } catch (error) {
       this.pendingTasks.fail(localTaskId, message.sessionId, error.message);
+      responder.observe?.("failed");
+      responder.failure?.(error);
       this.logger.error("确认飞书提交后更新腾讯草稿失败", error.message);
       await responder.replyProgress(
         streamId,
-        `**腾讯文档草稿未更新**\n\n本地短号 ${localTaskId} 已保留，可排查后再次发送 /done ${localTaskId}。\n错误：${error.message}`,
+        `**腾讯文档草稿未全部完成**\n\n本地短号 ${localTaskId} 已保留，可能已有部分内容写入。\n错误：${error.message}\n\n下一步：将短号 ${localTaskId} 和本条回复交给维护者核验，等待明确结果后再操作，不要立即重试 /done。`,
         true,
       );
     }
@@ -757,6 +812,48 @@ export class ConversationService {
     if (value == null) delete mapping[chatId];
     else mapping[chatId] = value;
     this.state.set(`__${kind}ByChat__`, mapping);
+  }
+
+  #forgetTasks(chatId,text) {
+    const command=text.match(/^\/forget\s+(#?\d{1,8}|all|confirm|dismiss)(?:\s+([a-f0-9]{64}))?$/i);
+    if(!command)return "用法：清10；清全部后按提示确认。仅停止本人当前会话追踪，不删除在线记录。";
+    const target=command[1].toLowerCase();
+    const token=command[2];
+    if((token&&!["confirm","dismiss"].includes(target))||(target==="dismiss"&&!token))return "确认卡无效，本次未清除。重新发送“清全部”。";
+    if(target==="dismiss"){
+      const confirmation=this.#getChatValue("forgetConfirm",chatId);
+      if(confirmation?.digest!==token)return "确认卡已失效，本次未清除。";
+      this.#setChatValue("forgetConfirm",chatId,null);return "已保留待办，本次不清除；在线记录未改动。";
+    }
+    const tasks=this.pendingTasks.list(chatId,{limit:Infinity}).sort((a,b)=>Number(a.id)-Number(b.id));
+    if(this.currentTask?.message?.sessionId===chatId || this.queue.items.some(task=>task.message?.sessionId===chatId) || tasks.some(task=>task.status==="processing"))return "本会话有任务处理中或排队，本次未清除。结束后重发；不要重复提交。";
+    if(target!=="all" && target!=="confirm"){
+      const task=this.pendingTasks.find(target,chatId);
+      if(!task)return "本人当前会话没有这个短号，未清除。发送“单”查看。";
+      if(["completed","cancelled"].includes(task.status))return `短号${task.id}已结束，不再追踪；在线记录未改动。`;
+      this.pendingTasks.cancel(task.id,chatId);
+      this.#setChatValue("dutyThreads",chatId,null);
+      this.#setChatValue("forgetConfirm",chatId,null);
+      return `已停止追踪短号${task.id}，不再续跑；在线记录未改动。`;
+    }
+    const waiting=this.#getChatValue("pendingDuty",chatId);
+    const digest=crypto.createHash("sha256").update(JSON.stringify({tasks,waiting:waiting || null})).digest("hex");
+    if(target==="all"){
+      if(!tasks.length && !waiting)return "本人当前会话没有待办或待补充任务。";
+      const preview=[`将停止追踪本人当前会话${tasks.length}条待办：`,tasks.map(task=>task.id).join("、") || "无编号待办",waiting?"另有1条未编号待补充任务。":"","在线记录不删除。5分钟内回复“确认清全部”执行。"].filter(Boolean).join("\n");
+      if(Buffer.byteLength(preview,"utf8")>3000)return "待办较多，无法完整展示确认范围，未清除。请使用“清 短号”逐条处理。";
+      this.#setChatValue("forgetConfirm",chatId,{digest,expiresAt:Date.now()+300000});
+      return preview;
+    }
+    const pending=this.#getChatValue("forgetConfirm",chatId);
+    if(token&&pending?.digest!==token)return "确认卡对应的清单已失效，本次未清除。重新发送“清全部”。";
+    this.#setChatValue("forgetConfirm",chatId,null);
+    if(!pending || pending.expiresAt<Date.now())return "清除确认已失效或尚未预览，本次未清除。重新发送“清全部”。";
+    if(pending.digest!==digest)return "待办或待补充内容已变化，本次未清除。重新发送“清全部”核对范围。";
+    for(const task of tasks)this.pendingTasks.cancel(task.id,chatId);
+    this.#setChatValue("pendingDuty",chatId,null);
+    this.#setChatValue("dutyThreads",chatId,null);
+    return `已停止追踪${tasks.length}条待办${waiting?"及1条待补充任务":""}，不再续跑；在线记录未改动。`;
   }
 
   #cancelTask(chatId, id) {

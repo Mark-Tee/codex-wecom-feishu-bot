@@ -34,6 +34,16 @@
   },
   "roster": {
     "rulesRoot": "./worker",
-    "businessConfigPath": "./worker/duty-config.json"
+    "businessConfigPath": "./worker/duty-config.json",
+    "powerHandoff": {
+      "enabled": false,
+      "enabledAt": "",
+      "workerConfigPath": "./worker/config.json",
+      "locationValue": "exampleHomeSite",
+      "categoryRules": [
+        {"workContentValue": "exampleWiring", "category": "布线理线"},
+        {"workContentValue": "exampleRack", "descriptionPattern": "上架", "category": "设备上架"}
+      ]
+    }
   }
 }

@@ -20,6 +20,14 @@ export function matchOption(value, options = []) {
 export function chooseWorkContent(fillCard = {}, options = []) {
   const direct = matchOption(fillCard.workContent, options);
   if (direct) return direct;
+  if (/布线|理线/.test(String(fillCard.workContent || ""))) {
+    const wiringOption = options.find(option => /布线.*理线/.test(option));
+    if (wiringOption) return wiringOption;
+  }
+  if (/上下架|设备上架|设备下架/.test(String(fillCard.workContent || ""))) {
+    const rackOption = options.find(option => /上下架/.test(option));
+    if (rackOption) return rackOption;
+  }
   const source = `${fillCard.workContent || ""} ${fillCard.specificWork || ""}`;
   const rules = [
     [/(宕机|物理重启|重启物理)/, /(宕机|重启)/],
