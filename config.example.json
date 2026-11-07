@@ -34,6 +34,13 @@
   },
   "roster": {
     "rulesRoot": "./worker",
-    "businessConfigPath": "./worker/duty-config.json"
+    "businessConfigPath": "./worker/duty-config.json",
+    "generation": {
+      "enabled": false,
+      "ownerUserId": "maintainer-user-id",
+      "python": "python",
+      "node": "node",
+      "outputDir": "./roster-output"
+    }
   }
 }

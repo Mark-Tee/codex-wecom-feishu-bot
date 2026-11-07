@@ -1,5 +1,7 @@
 # codex-wecom-feishu-bot
 
+Optional maintainer-only monthly roster drafts are documented in [Monthly roster module](docs/ROSTER_GENERATION.md). They include leave-linked Excel formulas and a guard against replacing an existing online month. Generation stays local; publishing requires separate authorization. OR-Tools and the separately licensed Codex Desktop spreadsheet runtime must be installed locally; neither runtime is bundled.
+
 Self-hosted automation linking WeCom, Codex, Feishu Base and Tencent Docs.
 
 The bot receives work orders from a WeCom intelligent bot, uses local Codex to

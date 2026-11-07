@@ -25,3 +25,9 @@ worker/node_modules/
 roster-state.json
 .local-backups/
 service-profile.local.json
+# Optional local roster dependencies and generated artifacts
+vendor/roster-python/
+roster-output/
+work/
+__pycache__/
+*.pyc

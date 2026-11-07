@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add opt-in maintainer-only monthly roster drafts, a generation button and help.
+- Add leave-linked Excel names/counts, cross-month rest and main-duty spacing,
+  compact colors/layout, and a refusal to replace existing online months.
+- Keep roster dependencies optional and external; add synthetic solver checks.
+
 - Split the bridge into long-connection, usage, cache, help, and optional
   hot-topic modules while preserving queue, pairing, context, and streaming
   behavior.

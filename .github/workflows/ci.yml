@@ -20,5 +20,14 @@ jobs:
         run: npm run check
       - name: Unit tests
         run: npm test
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Roster solver tests (synthetic data)
+        env:
+          PIP_CACHE_DIR: ${{ runner.temp }}/pip-cache
+        run: |
+          python -m pip install --target vendor/roster-python -r scripts/roster-requirements.txt
+          python tests/roster-solver.test.py
       - name: Sensitive-information scan
         run: npm run scan:secrets
